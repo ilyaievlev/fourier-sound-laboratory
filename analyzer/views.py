@@ -244,3 +244,44 @@ def api_spectrogram(request, rid, x, sr, meta):
     return JsonResponse(steps.step5(x, sr, int(g.get("win", 1024)), float(g.get("overlap", 0.75)),
                                     g.get("window", "hann"), int(g.get("mels", 64)), float(g.get("fmax", 8000)),
                                     float(g.get("t", 0)), mode))
+
+
+@require_GET
+def api_models_status(request):
+    from .services import models as MD
+    return JsonResponse(MD.status())
+
+
+@require_POST
+@with_rec
+def api_classify(request, rid, x, sr, meta):
+    body = json.loads(request.body or b"{}")
+    labels = steps.validate_labels(body.get("labels", []))
+    variant = body.get("variant", {"type": "orig"})
+    edited = None
+    if variant.get("type") == "edit":
+        p = _store().rec_dir(_sid(request), rid) / "edited.wav"
+        if p.exists():
+            edited, _ = sf.read(str(p), dtype="float64")
+    try:
+        res = steps.step6(x, sr, labels, float(body.get("threshold", 0.5)), variant, edited)
+    except ImportError:
+        return _err("Не установлены PyTorch/transformers: выполните uv sync --extra ml.", 503)
+    except OSError as e:
+        return _err(f"Модели не загружены: {e}. Выполните uv run python scripts/download_models.py.", 503)
+    res["labels"] = labels
+    return JsonResponse(res)
+
+
+@require_GET
+@with_rec
+def variant_audio(request, rid, x, sr, meta):
+    """Искажённый вариант для шага 6 (шум или вырезанная полоса) — послушать, что получает модель."""
+    v = {k: request.GET[k] for k in ("type", "snr", "f_lo", "f_hi") if k in request.GET}
+    edited = None
+    if v.get("type") == "edit":
+        p = _store().rec_dir(_sid(request), rid) / "edited.wav"
+        if p.exists():
+            edited, _ = sf.read(str(p), dtype="float64")
+    y, _ = steps.make_variant(x, sr, v, edited)
+    return _wav_response(y, sr, "variant.wav")

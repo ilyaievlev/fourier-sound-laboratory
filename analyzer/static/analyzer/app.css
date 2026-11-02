@@ -63,6 +63,10 @@ input[type=range] { vertical-align: middle; width: 220px; }
 .plot.tall { height: calc(var(--plot-h) * 1.3); }
 .plot.short { height: calc(var(--plot-h) * .7); }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1em; }
+.grid3 { display: grid; grid-template-columns: 0.7fr 1fr 1fr; gap: 1em; }
+.lab-row { display: flex; gap: .5em; align-items: center; margin: .2em 0; }
+.lab-row code { color: var(--muted); }
+@media (max-width: 1000px) { .grid3 { grid-template-columns: 1fr; } }
 .summary { background: var(--accent-soft); padding: .7em 1em; border-radius: 6px; }
 .math { border-left: 4px solid var(--accent); padding: .4em 1em; margin: 1em 0; overflow-x: auto; }
 .math .line { margin: .5em 0; }

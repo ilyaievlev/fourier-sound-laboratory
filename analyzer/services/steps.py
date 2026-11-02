@@ -377,3 +377,120 @@ def step5(x: np.ndarray, sr: int, n_win: int, overlap: float, window: str, n_mel
         res["ast"] = {**p, "frames_used": min(M, p["max_frames"]), "n_patches_t": n_t, "n_patches_f": n_f,
                       "n_patches": n_t * n_f, "padded": max(0, p["max_frames"] - M), "truncated": M > p["max_frames"]}
     return res
+
+
+# ---------------------------------------------------------------------------
+# Шаг 6. Классификация
+# ---------------------------------------------------------------------------
+
+import hashlib  # noqa: E402
+from collections import OrderedDict  # noqa: E402
+
+from . import probs as PR  # noqa: E402
+from .labels_ru import AUDIOSET_RU, CLAP_OTHER, CLAP_TEMPLATE  # noqa: E402
+
+_cls_cache: OrderedDict = OrderedDict()
+VARIANTS = ("orig", "noise", "cut", "edit")
+
+
+def make_variant(x: np.ndarray, sr: int, v: dict, edited: np.ndarray | None) -> tuple[np.ndarray, dict]:
+    kind = v.get("type", "orig")
+    if kind == "orig":
+        return x, {"type": "orig"}
+    if kind == "noise":
+        snr = float(v["snr"])
+        if not -10 <= snr <= 60:
+            raise ValueError("SNR от −10 до 60 дБ")
+        y, info = PR.add_noise(x, snr, seed=0)
+        return y, {"type": "noise", **info}
+    if kind == "cut":
+        ops = validate_ops([{"type": "remove_band", "f_lo": v["f_lo"], "f_hi": v["f_hi"]}], sr)
+        y, kept = F.apply_spectral_edit(x, sr, ops)
+        return y, {"type": "cut", "f_lo": ops[0]["f_lo"], "f_hi": ops[0]["f_hi"], "kept_energy": kept}
+    if kind == "edit":
+        if edited is None:
+            raise ValueError("на шаге 4 нет изменений")
+        return edited, {"type": "edit"}
+    raise ValueError("неизвестный вариант")
+
+
+def _classify(y: np.ndarray, sr: int, prompts: list[str]) -> dict:
+    from . import models as MD
+
+    key = hashlib.sha1(np.ascontiguousarray(y, dtype=np.float32).tobytes() + repr((sr, prompts)).encode()).hexdigest()
+    if key in _cls_cache:
+        _cls_cache.move_to_end(key)
+        return _cls_cache[key]
+    a = MD.ast_infer(sampling.resample(y, sr, 16000))
+    c = MD.clap_infer(sampling.resample(y, sr, 48000), prompts)
+    res = {"ast": a, "clap": c}
+    _cls_cache[key] = res
+    if len(_cls_cache) > 24:
+        _cls_cache.popitem(last=False)
+    return res
+
+
+def _ast_summary(a: dict, k: int = 5) -> dict:
+    z = a["logits"]
+    p = PR.sigmoid(z)
+    idx = PR.top_k(p, k)
+    top = [{"label": a["labels"][i], "ru": AUDIOSET_RU.get(a["labels"][i]), "z": float(z[i]), "p": float(p[i]),
+            "h": float(PR.binary_entropy(p[i]))} for i in idx]
+    sm = PR.softmax(z)
+    return {"top": top, "sum_sigmoid": float(p.sum()), "n_classes": int(z.size), "n_above_half": int((p > 0.5).sum()),
+            "softmax_top": float(sm[idx[0]]), "infer_s": a["infer_s"], "device": a["device"]}
+
+
+def _clap_summary(c: dict, labels: list[dict], threshold: float) -> dict:
+    p = PR.softmax(c["logits"])
+    i = int(np.argmax(p))
+    H = PR.entropy(p)
+    is_other = labels[i]["ru"] == CLAP_OTHER[0] or p[i] < threshold
+    return {
+        "labels": [{**lab, "z": float(c["logits"][j]), "cos": float(c["cos"][j]), "p": float(p[j])} for j, lab in enumerate(labels)],
+        "scale": c["scale"], "tau": 1 / c["scale"], "entropy": H, "entropy_max": float(np.log(len(labels))),
+        "best": i, "threshold": threshold, "verdict": CLAP_OTHER[0] if is_other else labels[i]["ru"],
+        "uncertain": bool(p[i] < threshold), "infer_s": c["infer_s"], "device": c["device"],
+        "repeat_padded": c["repeat_padded"],
+    }
+
+
+def validate_labels(labels) -> list[dict]:
+    if not isinstance(labels, list) or not 1 <= len(labels) <= 15:
+        raise ValueError("от 1 до 15 меток")
+    out = []
+    for lab in labels:
+        ru, en = str(lab.get("ru", "")).strip()[:40], str(lab.get("en", "")).strip()[:60]
+        if not en:
+            raise ValueError("у каждой метки должен быть текст для модели (по-английски)")
+        if ru != CLAP_OTHER[0]:
+            out.append({"ru": ru or en, "en": en})
+    out.append({"ru": CLAP_OTHER[0], "en": CLAP_OTHER[1]})  # «другое» всегда есть
+    return out
+
+
+def step6(x: np.ndarray, sr: int, labels: list[dict], threshold: float, variant: dict,
+          edited: np.ndarray | None) -> dict:
+    if not 0 < threshold < 1:
+        raise ValueError("порог от 0 до 1")
+    prompts = [CLAP_TEMPLATE.format(lab["en"]) for lab in labels]
+    base = _classify(x, sr, prompts)
+    res = {
+        "orig": {"ast": _ast_summary(base["ast"]), "clap": _clap_summary(base["clap"], labels, threshold)},
+        "prompts": prompts, "template": CLAP_TEMPLATE,
+    }
+    a = base["ast"]
+    n16 = int(round(x.size / sr * 16000))
+    res["input"] = {"values": b64(a["input"]), "frames": a["input"].shape[0], "mels": a["input"].shape[1],
+                    "real_frames": int(min(a["input"].shape[0], max(0, (n16 - 400) // 160 + 1))),
+                    "mean": a["mean"], "std": a["std"],
+                    "patches": {"f": (128 - 16) // 10 + 1, "t": (1024 - 16) // 10 + 1}}
+    if variant.get("type", "orig") != "orig":
+        y, info = make_variant(x, sr, variant, edited)
+        v = _classify(y, sr, prompts)
+        res["variant"] = {"info": info, "ast": _ast_summary(v["ast"]), "clap": _clap_summary(v["clap"], labels, threshold)}
+        # те же 5 классов AudioSet, что в исходной записи: как изменились их вероятности
+        lab_idx = {l: i for i, l in enumerate(v["ast"]["labels"])}
+        pv = PR.sigmoid(v["ast"]["logits"])
+        res["variant"]["ast_same"] = [float(pv[lab_idx[t["label"]]]) for t in res["orig"]["ast"]["top"]]
+    return res

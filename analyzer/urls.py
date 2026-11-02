@@ -17,4 +17,7 @@ urlpatterns = [
     path("api/rec/<str:rid>/edit.wav", views.edit_audio),
     path("api/rec/<str:rid>/band.wav", views.band_audio),
     path("api/rec/<str:rid>/spectrogram", views.api_spectrogram),
+    path("api/rec/<str:rid>/classify", views.api_classify),
+    path("api/models/status", views.api_models_status),
+    path("api/rec/<str:rid>/variant.wav", views.variant_audio),
 ]

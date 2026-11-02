@@ -70,7 +70,7 @@
   <button type="button" data-step="3">3. Откуда коэффициент</button>
   <button type="button" data-step="4">4. Спектр (ДПФ)</button>
   <button type="button" data-step="5">5. Спектрограмма</button>
-  <button type="button" data-step="6" disabled title="Этап 4 плана">6. Классификация</button>
+  <button type="button" data-step="6">6. Классификация</button>
   <button type="button" data-step="7" disabled title="Этап 5 плана">7. Норма / аномалия</button>
 </nav>
 
@@ -329,7 +329,68 @@
       Точный вход модели (с предыскажением 0,97, удалением постоянной составляющей и нормировкой из её препроцессора) будет показан на шаге 6.</p>
   </details>
 </section>
-<section class="step card" data-step="6" hidden><h2>Шаг 6. Классификация</h2><p class="muted">Будет на этапе 4.</p></section>
+<!-- ===================== ШАГ 6 ===================== -->
+<section class="step card" data-step="6" hidden>
+  <h2>Шаг 6. Классификация</h2>
+  <p id="s6-status" class="hint">Модели загружаются при первом открытии шага (на процессоре — до минуты).</p>
+  <div class="grid3">
+    <div class="box">
+      <h3>Наша дообученная AST</h3>
+      <p class="muted">Появится после обучения на классах проекта (этап 8 плана). Пока используются готовые модели справа.</p>
+    </div>
+    <div class="box"><h3>AST, AudioSet (527 классов), топ-5</h3><div class="plot short" id="p6-ast"></div></div>
+    <div class="box"><h3>CLAP, zero-shot по меткам</h3><div class="plot short" id="p6-clap"></div><p id="clap-verdict" class="summary"></p></div>
+  </div>
+  <div class="controls">
+    <label>Порог уверенности CLAP: <b id="thr-val"></b> <input type="range" id="thr" min="0.2" max="0.9" step="0.05" value="0.5"></label>
+  </div>
+  <details class="box"><summary><b>Метки CLAP</b> — можно дописать свои (текст для модели по-английски)</summary>
+    <div id="labels-list"></div>
+    <div class="controls">
+      <input id="new-ru" placeholder="по-русски: дрель"> <input id="new-en" placeholder="для модели: a power drill">
+      <button type="button" id="add-label">Добавить</button>
+    </div>
+    <p class="hint">CLAP обучалась на английских подписях, поэтому модели передаётся английский текст по шаблону «This is a sound of …». Метка «другое» есть всегда.</p>
+  </details>
+  <h3>Сравнить до и после</h3>
+  <div class="controls">
+    <div class="seg-buttons" id="var-options">
+      <button type="button" data-var="orig" class="active">без изменений</button>
+      <button type="button" data-var="noise">шум</button>
+      <button type="button" data-var="cut">вырезать полосу</button>
+      <button type="button" data-var="edit">изменения шага 4</button>
+    </div>
+    <label id="snr-box" hidden>SNR: <b id="snr-val"></b> дБ <input type="range" id="snr" min="-10" max="40" step="1" value="10"></label>
+    <label id="cut-box" hidden><input type="number" id="c6-lo" value="500" step="50"> – <input type="number" id="c6-hi" value="4000" step="50"> Гц</label>
+    <button type="button" id="run6">Классифицировать</button>
+    <audio id="var-audio" controls hidden></audio>
+  </div>
+  <h3>Что на самом деле получает AST</h3>
+  <div class="plot" id="p6-input"></div>
+  <p class="summary" id="s6-summary"></p>
+  <div class="math"><h3>Где здесь математика</h3><div id="m6"></div></div>
+  <details class="strict"><summary>Строго</summary>
+    <p><b>Что показываем.</b> Внутреннее устройство моделей здесь не разбирается. Факт один: на вход AST идёт лог-мел-спектрограмма из шага 5
+      (1024 кадра × 128 полос), нормированная как <span class="tex">\hat S = (\ln S_{\text{мел}} - \mu)/(2\sigma)</span> и разрезанная на патчи 16×16 с шагом 10.
+      На выходе — числа <span class="tex">z_i</span> (логиты), по одному на класс.</p>
+    <p><b>AudioSet — многометочная задача.</b> В одном клипе могут одновременно звучать речь, музыка и шум, поэтому AST обучена с независимой вероятностью на каждый класс:</p>
+    <div class="tex-d">p_i = \sigma(z_i) = \frac{1}{1 + e^{-z_i}},\qquad \sum_i p_i \ne 1\ \text{в общем случае}.</div>
+    <p>Softmax здесь был бы ошибкой: он заставил бы классы конкурировать, и уверенность «речь 0,9» отняла бы вероятность у «музыки». Поэтому в интерфейсе показана сигмоида — то, что модель реально выдаёт.</p>
+    <p><b>CLAP — выбор одной метки из списка.</b> Звук и каждая текстовая метка переводятся в векторы единичной длины, логит — косинус между ними, умноженный на обученный масштаб <span class="tex">e^{s}</span>:</p>
+    <div class="tex-d">z_i = e^{s}\cos(\mathbf a, \mathbf t_i),\qquad p_i = \frac{\exp(z_i)}{\sum_j \exp(z_j)} = \frac{\exp(\cos_i/\tau)}{\sum_j\exp(\cos_j/\tau)},\quad \tau = e^{-s}.</div>
+    <p>Вероятности суммируются в 1 только по <i>выбранным</i> меткам: если подходящей метки нет, модель всё равно распределит 100% между имеющимися. Поэтому нужны метка «другое» и порог уверенности.</p>
+    <p><b>Энтропия.</b> <span class="tex">H(p) = -\sum_i p_i\ln p_i</span>, <span class="tex">0 \le H \le \ln K</span>. <span class="tex">H = 0</span> — модель уверена в одной метке, <span class="tex">H = \ln K</span> — все метки равновероятны.
+      Для независимых меток AST — бинарная энтропия каждой: <span class="tex">-p\ln p - (1-p)\ln(1-p)</span>, максимум <span class="tex">\ln 2</span> при <span class="tex">p = 0{,}5</span>.</p>
+    <p><b>Функция потерь.</b> Для сигмоиды — бинарная кросс-энтропия <span class="tex">L = -\sum_i [y_i\ln p_i + (1-y_i)\ln(1-p_i)]</span>, для softmax — кросс-энтропия <span class="tex">L = -\ln p_{\text{верный}}</span>.
+      CLAP обучали контрастно: в батче из пар «звук — подпись» кросс-энтропия заставляет верную пару иметь наибольший косинус.</p>
+    <p><b>Обучение — градиентный спуск.</b> Параметры <span class="tex">\theta</span> сдвигают против градиента: <span class="tex">\theta \leftarrow \theta - \eta\,\nabla_\theta L</span>, <span class="tex">\eta</span> — шаг обучения.
+      Градиент считается по цепному правилу: <span class="tex">\frac{\partial L}{\partial \theta} = \frac{\partial L}{\partial z}\cdot\frac{\partial z}{\partial \theta}</span>, и так слой за слоем (обратное распространение ошибки).</p>
+    <p>Для обеих пар «вероятность + потеря» производная по логиту получается одинаково простой:</p>
+    <div class="tex-d">\frac{\partial}{\partial z}\Big[-y\ln\sigma(z) - (1-y)\ln(1-\sigma(z))\Big] = \sigma(z) - y,\qquad \frac{\partial}{\partial z_i}\big[-\ln \operatorname{softmax}(z)_c\big] = p_i - [i = c].</div>
+    <p>Вывод для сигмоиды: <span class="tex">\sigma'(z) = \sigma(z)(1-\sigma(z))</span>, поэтому <span class="tex">-\frac{y}{\sigma}\sigma(1-\sigma) + \frac{1-y}{1-\sigma}\sigma(1-\sigma) = \sigma - y</span>. Оба равенства проверены в тестах конечными разностями.</p>
+    <p><b>Шум с заданным SNR.</b> <span class="tex">\text{SNR} = 10\log_{10}\frac{P_{\text{сигнала}}}{P_{\text{шума}}}</span>, <span class="tex">P = \frac1N\sum x[n]^2</span>. Белый гауссов шум масштабируется так, чтобы SNR был ровно заданным.</p>
+  </details>
+</section>
 <section class="step card" data-step="7" hidden><h2>Шаг 7. Норма или аномалия</h2><p class="muted">Будет на этапе 5.</p></section>
 </main>
 {% endverbatim %}

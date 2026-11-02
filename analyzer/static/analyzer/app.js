@@ -105,6 +105,11 @@ const S = {
   t0: 0, T: 30, N: 10, src: "rec", n3: 1, kind: "cos", m: 2,
   fs: 8000, aa: true, win: "hann", scale: "db", fmax: 5000, bw: 15, ops: [],
   step: 1, spec: null, edited: null, period: null,
+  variant: "orig", snr: 10, thr: 0.5, s6: null,
+  clapLabels: [
+    { ru: "голос", en: "a person speaking" }, { ru: "свист", en: "a person whistling" }, { ru: "хлопки", en: "hands clapping" },
+    { ru: "сирена", en: "a siren" }, { ru: "музыка", en: "music" }, { ru: "работающая машина", en: "a machine running" }, { ru: "шум", en: "noise" },
+  ],
   mode5: "custom", fscale: "lin", win5: 1024, overlap: 0.75, wtype: "hann", mels: 64, fmax5: 8000, t5: null,
 };
 
@@ -236,6 +241,7 @@ async function refresh() {
     else if (S.step === 3) await step3(my);
     else if (S.step === 4) await step4(my);
     else if (S.step === 5) await step5(my);
+    else if (S.step === 6) await step6(my);
   } catch (e) { showError(e); }
 }
 const refreshSoon = debounce(refresh, 160);
@@ -622,6 +628,113 @@ function renderSpectrogram() {
     `Длинное окно точнее по частоте, короткое — по времени: σₜ·σ_f = ${txt(g.product, 3)}, а меньше 1/(4π) ≈ 0,0796 не бывает. Именно такая картинка (мел, лог) идёт на вход нейросети.`;
 }
 
+// ---------------------------------------------------------------- шаг 6
+function variantSpec() {
+  if (S.variant === "noise") return { type: "noise", snr: S.snr };
+  if (S.variant === "cut") return { type: "cut", f_lo: +$("#c6-lo").value, f_hi: +$("#c6-hi").value };
+  if (S.variant === "edit") return { type: "edit" };
+  return { type: "orig" };
+}
+
+function renderLabels() {
+  const box = $("#labels-list");
+  box.innerHTML = "";
+  S.clapLabels.forEach((l, i) => {
+    const row = document.createElement("div");
+    row.className = "lab-row";
+    row.innerHTML = `<span>${l.ru.replace(/</g, "&lt;")}</span> <code>${l.en.replace(/</g, "&lt;")}</code>`;
+    const del = Object.assign(document.createElement("button"), { type: "button", textContent: "✕", title: "Убрать метку" });
+    del.onclick = () => { S.clapLabels.splice(i, 1); renderLabels(); };
+    row.appendChild(del);
+    box.appendChild(row);
+  });
+  const o = document.createElement("div");
+  o.className = "lab-row muted";
+  o.innerHTML = "<span>другое</span> <code>some other sound</code> (всегда)";
+  box.appendChild(o);
+}
+
+async function step6(my) {
+  const st = $("#s6-status");
+  st.textContent = "Считаю… (при первом запуске модели загружаются в память)";
+  const v = variantSpec();
+  if (v.type === "edit" && !S.ops.length) { st.textContent = "На шаге 4 нет изменений — сначала удалите компоненту или примените фильтр."; return; }
+  const t = performance.now();
+  const r = await post(`/api/rec/${S.rid}/classify`, { labels: S.clapLabels, threshold: S.thr, variant: v }, true);
+  if (my !== seq) return;
+  S.s6 = r;
+  const a = r.orig.ast, c = r.orig.clap;
+  st.textContent = `Готово за ${txt((performance.now() - t) / 1000, 2)} с. Устройство: ${a.device}. AST — ${a.n_classes} классов, ревизия закреплена.`;
+  const va = $("#var-audio");
+  if (v.type === "orig") va.hidden = true;
+  else { va.hidden = false; va.src = `/api/rec/${S.rid}/variant.wav?` + new URLSearchParams(v); }
+  renderStep6();
+}
+
+function renderStep6() {
+  const r = S.s6;
+  if (!r) return;
+  const a = r.orig.ast, c = r.orig.clap, V = r.variant;
+  const name = (t) => (t.ru ? `${t.ru} (${t.label})` : t.label);
+  const astY = a.top.map(name).reverse();
+  const astData = [{ type: "bar", orientation: "h", y: astY, x: a.top.map((t) => t.p).reverse(), name: "исходная", marker: { color: C.accent },
+    text: a.top.map((t) => txt(t.p, 2)).reverse(), textposition: "auto" }];
+  if (V) astData.push({ type: "bar", orientation: "h", y: astY, x: V.ast_same.slice().reverse(), name: "после изменения", marker: { color: C.orange },
+    text: V.ast_same.map((p) => txt(p, 2)).reverse(), textposition: "auto" });
+  plot("p6-ast", astData, { barmode: "group", margin: { l: 230, r: 10, t: 10, b: 35 }, xaxis: { range: [0, 1], title: { text: "σ(z) — независимо для каждого класса" } }, showlegend: !!V });
+
+  const cy = c.labels.map((l) => l.ru).reverse();
+  const clapData = [{ type: "bar", orientation: "h", y: cy, x: c.labels.map((l) => l.p).reverse(), name: "исходная", marker: { color: C.accent },
+    text: c.labels.map((l) => txt(l.p, 2)).reverse(), textposition: "auto" }];
+  if (V) clapData.push({ type: "bar", orientation: "h", y: cy, x: V.clap.labels.map((l) => l.p).reverse(), name: "после изменения", marker: { color: C.orange },
+    text: V.clap.labels.map((l) => txt(l.p, 2)).reverse(), textposition: "auto" });
+  plot("p6-clap", clapData, { barmode: "group", margin: { l: 140, r: 10, t: 10, b: 35 }, showlegend: !!V,
+    xaxis: { range: [0, 1], title: { text: "softmax — сумма по меткам = 1" } },
+    shapes: [{ type: "line", x0: S.thr, x1: S.thr, yref: "paper", y0: 0, y1: 1, line: { color: C.neg, dash: "dash" } }] });
+  const best = c.labels[c.best];
+  $("#clap-verdict").textContent = c.uncertain
+    ? `Не уверена: максимум ${txt(best.p, 2)} («${best.ru}») ниже порога ${txt(S.thr, 2)} → «другое».`
+    : `Ответ: «${c.verdict}» (${txt(best.p, 2)}).` + (V ? ` После изменения: «${V.clap.verdict}» (${txt(V.clap.labels[V.clap.best].p, 2)}).` : "");
+
+  // вход модели
+  const I = r.input, vals = f32(I.values), Fm = I.frames, Mm = I.mels;
+  const z = range(Mm, (j) => { const row = new Float32Array(Fm); for (let f = 0; f < Fm; f++) row[f] = vals[f * Mm + j]; return row; });
+  const shapes = [];
+  for (let i = 0; i <= I.patches.t; i += 10) shapes.push({ type: "line", x0: i * 10, x1: i * 10, y0: 0, y1: Mm - 1, line: { color: "rgba(255,255,255,.35)", width: 1 } });
+  for (let i = 0; i < I.patches.f; i++) shapes.push({ type: "line", x0: 0, x1: Fm, y0: i * 10, y1: i * 10, line: { color: "rgba(255,255,255,.35)", width: 1 } });
+  if (I.real_frames < Fm) shapes.push({ type: "rect", x0: I.real_frames, x1: Fm, y0: 0, y1: Mm - 1, fillcolor: "rgba(120,120,120,.4)", line: { width: 0 } });
+  plot("p6-input", [{ type: "heatmap", z, colorscale: "Viridis", colorbar: { title: { text: "Ŝ" } }, hovertemplate: "кадр %{x}<br>полоса %{y}<br>%{z:.2f}<extra></extra>" }], {
+    title: { text: `Вход AST: ${Fm} кадров × ${Mm} мел-полос, ${I.patches.f}×${I.patches.t} = ${I.patches.f * I.patches.t} патчей (линии — каждый 10-й патч по времени)` },
+    xaxis: { title: { text: "кадр (10 мс)" } }, yaxis: { title: { text: "мел-полоса" } }, shapes,
+  });
+
+  // формулы
+  const t0 = a.top[0], K = c.labels.length;
+  const lines = [
+    `\\text{AST: } p = \\sigma(z) = \\frac{1}{1 + e^{-z}} = \\frac{1}{1 + e^{-(${num(t0.z, 4)})}} = ${num(t0.p, 4)}\\quad(\\text{${t0.label}})`,
+    `\\sum_{i=1}^{${a.n_classes}} \\sigma(z_i) = ${num(a.sum_sigmoid, 4)}\\ \\ne 1,\\qquad \\#\\{p_i > 0{,}5\\} = ${a.n_above_half}`,
+    { html: `Если бы к тем же логитам ошибочно применили softmax по ${a.n_classes} классам, у «${t0.label}» вышло бы ${txt(a.softmax_top, 3)} — но модель обучалась не так, поэтому показываем сигмоиду.` },
+    `H_{\\text{бин}}(${num(t0.p, 3)}) = -p\\ln p - (1-p)\\ln(1-p) = ${num(t0.h, 3)}\\ \\text{нат}\\quad(\\max \\ln 2 = 0{,}693)`,
+    `\\hat S = \\frac{\\ln S_{\\text{мел}} - \\mu}{2\\sigma} = \\frac{\\ln S_{\\text{мел}} - (${num(I.mean, 5)})}{2\\cdot ${num(I.std, 5)}},\\quad ${Fm}\\times ${Mm} \\to ${I.patches.f}\\times${I.patches.t} = ${I.patches.f * I.patches.t}\\ \\text{патчей}`,
+    `\\text{CLAP: } z_i = e^{s}\\cos_i,\\ e^{s} = ${num(c.scale, 4)},\\ \\tau = e^{-s} = ${num(c.tau, 3)}`,
+    `z_{\\text{${best.en.replace(/[{}\\#%&_^~$]/g, "")}}} = ${num(c.scale, 4)}\\cdot ${num(best.cos, 4)} = ${num(best.z, 4)},\\qquad p = \\frac{e^{z}}{\\sum_{j=1}^{${K}} e^{z_j}} = ${num(best.p, 4)}`,
+    `H = -\\sum_{i=1}^{${K}} p_i \\ln p_i = ${num(c.entropy, 3)}\\ \\text{нат},\\quad \\frac{H}{\\ln ${K}} = ${num(c.entropy / c.entropy_max, 3)}`,
+  ];
+  if (c.repeat_padded) lines.push({ html: "Запись короче 10 с: препроцессор CLAP повторяет её по кругу до 10 с (repeatpad), так модель и обучалась." });
+  if (V && V.info.type === "noise") lines.push(`\\text{SNR} = 10\\log_{10}\\frac{P_{\\text{сигн}}}{P_{\\text{шума}}} = 10\\log_{10}\\frac{${num(V.info.p_signal, 4)}}{${num(V.info.p_noise, 4)}} = ${num(V.info.snr_db, 3)}\\ \\text{дБ}`);
+  if (V && V.info.type === "cut") lines.push({ html: `Вырезано ${txt(V.info.f_lo, 4)}–${txt(V.info.f_hi, 4)} Гц, осталось ${pct(V.info.kept_energy)} энергии.` });
+  mathBlock("m6", lines);
+
+  let sm = `AST (AudioSet) считает главным «${name(t0)}» с вероятностью ${txt(t0.p, 2)}; вероятности классов независимы, их сумма ${txt(a.sum_sigmoid, 3)}. ` +
+    `CLAP выбирает из ${K} меток: ${c.uncertain ? "уверенного ответа нет" : `«${c.verdict}»`}, энтропия ${txt(c.entropy / c.entropy_max * 100, 2)}% от максимума.`;
+  if (S.s6 && S.meta?.synthetic) sm += " Это синтетический пример: модели обучены на реальных звуках, поэтому на синтезе могут ошибаться — это честный результат.";
+  if (V) {
+    const d = V.ast_same[0] - t0.p;
+    sm += ` После изменения вероятность «${t0.label}» ${d < 0 ? "упала" : "выросла"} на ${txt(Math.abs(d), 2)}.`;
+  }
+  $("#s6-summary").textContent = sm;
+}
+
 // ---------------------------------------------------------------- обработчики
 function segButtons(id, attr, key, after) {
   $$(`#${id} button`).forEach((b) => (b.onclick = () => {
@@ -699,6 +812,27 @@ window.addEventListener("DOMContentLoaded", () => {
   $("#fmax5").onchange = (e) => { S.fmax5 = +e.target.value; refresh(); };
   $("#mels").oninput = (e) => { S.mels = +e.target.value; $("#mels-val").textContent = S.mels; refreshSoon(); };
   $("#mels-val").textContent = S.mels;
+
+  // шаг 6
+  renderLabels();
+  segButtons("var-options", "var", "variant", () => {
+    $("#snr-box").hidden = S.variant !== "noise";
+    $("#cut-box").hidden = S.variant !== "cut";
+  });
+  $("#snr").oninput = (e) => { S.snr = +e.target.value; $("#snr-val").textContent = S.snr; };
+  $("#snr-val").textContent = S.snr;
+  $("#thr").oninput = (e) => { S.thr = +e.target.value; $("#thr-val").textContent = txt(S.thr, 2); };
+  $("#thr").onchange = () => refresh();
+  $("#thr-val").textContent = txt(S.thr, 2);
+  $("#run6").onclick = () => refresh();
+  $("#add-label").onclick = () => {
+    const ru = $("#new-ru").value.trim(), en = $("#new-en").value.trim();
+    if (!en) return showError(new Error("Нужен текст метки по-английски — его понимает CLAP."));
+    if (S.clapLabels.length >= 14) return showError(new Error("Не больше 14 своих меток."));
+    S.clapLabels.push({ ru: ru || en, en });
+    $("#new-ru").value = $("#new-en").value = "";
+    renderLabels();
+  };
 
   // презентационный режим
   $("#btn-present").onclick = (e) => {
