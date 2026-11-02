@@ -1,0 +1,42 @@
+# Python / окружение
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+*.egg-info/
+
+# Секреты: токены Hugging Face и прочее — только в окружении
+.env
+.env.*
+*.token
+.huggingface/
+
+# Данные и результаты, которые не должны попадать в git
+media/
+tmp/
+data/
+datasets/
+mlruns/
+runs/
+artifacts/*
+!artifacts/.gitkeep
+!artifacts/README.md
+*.ckpt
+*.pt
+*.pth
+*.safetensors
+*.bin
+*.npz
+
+# Свои записи с микрофона — не публикуются без отдельного решения
+recordings/
+
+# Django
+db.sqlite3
+staticfiles/
+
+# Система / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

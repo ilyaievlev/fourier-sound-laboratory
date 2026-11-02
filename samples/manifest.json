@@ -1,0 +1,51 @@
+[
+ {
+  "id": "voice",
+  "title": "Голос",
+  "file": "voice.wav",
+  "description": "Синтез гласных «а», «о», «и»: импульсы голосовой щели (модель Розенберга, f₀ ≈ 115–145 Гц) через резонаторы формант.",
+  "synthetic": true
+ },
+ {
+  "id": "whistle",
+  "title": "Свист",
+  "file": "whistle.wav",
+  "description": "Почти чистый тон 1,6–2,1 кГц с вибрато 5,5 Гц и шумом дыхания.",
+  "synthetic": true
+ },
+ {
+  "id": "clap",
+  "title": "Хлопки",
+  "file": "clap.wav",
+  "description": "Пять коротких шумовых импульсов в полосе 0,9–5 кГц с затуханием ≈ 6 мс.",
+  "synthetic": true
+ },
+ {
+  "id": "siren",
+  "title": "Сирена",
+  "file": "siren.wav",
+  "description": "Частотная модуляция 650–1450 Гц с периодом 2 с, с 2-й и 3-й гармониками.",
+  "synthetic": true
+ },
+ {
+  "id": "music",
+  "title": "Музыка",
+  "file": "music.wav",
+  "description": "Арпеджио ля минор: затухающие ноты с 8 гармониками каждая.",
+  "synthetic": true
+ },
+ {
+  "id": "pump_normal",
+  "title": "Насос: норма",
+  "file": "pump_normal.wav",
+  "description": "Модель насоса: вращение 24,5 Гц и гармоники, лопаточная частота 147 Гц, гул 100 Гц, шум потока.",
+  "synthetic": true
+ },
+ {
+  "id": "pump_anomaly",
+  "title": "Насос: аномалия",
+  "file": "pump_anomaly.wav",
+  "description": "Та же модель + удары ≈ 103 раза в секунду, возбуждающие резонанс 3,1 кГц, и усиленная 2-я гармоника вращения.",
+  "synthetic": true
+ }
+]

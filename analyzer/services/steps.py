@@ -1,0 +1,309 @@
+"""Сборка данных для шагов интерфейса из чистой математики. Без Django.
+
+Каждая функция возвращает словарь, пригодный для JSON: массивы для графиков
+(в base64 float32) и числа, которые подставляются в формулы на странице.
+"""
+from __future__ import annotations
+
+import base64
+import time
+
+import numpy as np
+
+from . import audio, fourier as F, sampling
+
+FS_OPTIONS = [2000, 4000, 8000, 16000, 44100]
+N_MAX_UI = 200
+ANALYTIC_M = 16384
+SOURCES = ("rec", "square", "saw", "abs")
+
+
+def b64(a) -> str:
+    return base64.b64encode(np.ascontiguousarray(a, dtype="<f4").tobytes()).decode("ascii")
+
+
+def _f(v) -> float | None:
+    v = float(v)
+    return v if np.isfinite(v) else None
+
+
+# ---------------------------------------------------------------------------
+# Общее описание записи
+# ---------------------------------------------------------------------------
+
+def overview(x: np.ndarray, sr: int, meta: dict) -> dict:
+    return {
+        "sr": sr,
+        "n": int(x.size),
+        "duration": x.size / sr,
+        "wave": b64(x),
+        "quality": audio.quality_report(x, sr),
+        "suggested_t0": audio.loudest_time(x, sr),
+        "meta": meta,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Шаг 1. Дискретизация
+# ---------------------------------------------------------------------------
+
+def fs_options(sr: int) -> list[dict]:
+    return [{"fs": f, "available": f <= sr} for f in FS_OPTIONS]
+
+
+def resample_for_step1(x: np.ndarray, sr: int, fs: int, antialias: bool) -> np.ndarray:
+    if fs >= sr:
+        return np.asarray(x, dtype=float)
+    return sampling.resample(x, sr, fs) if antialias else sampling.sample_without_filter(x, sr, fs)
+
+
+def step1(x: np.ndarray, sr: int, fs: int, antialias: bool) -> dict:
+    fs = int(min(fs, sr))
+    y = resample_for_step1(x, sr, fs, antialias)
+    f99 = F.energy_below(x, sr, 0.99)
+    spec = F.amplitude_spectrum(x, sr, "hann")
+    f_peak = float(spec.freqs[int(np.argmax(spec.amplitude[1:])) + 1])
+    above = F.energy_fraction_above(x, sr, fs / 2)
+    t_loud = audio.loudest_time(x, sr)
+    n0 = int(round(t_loud * fs))
+    n0 = min(n0, y.size - 1)
+    return {
+        "fs": fs,
+        "sr": sr,
+        "antialias": antialias,
+        "dt": 1 / fs,
+        "nyquist": fs / 2,
+        "f99": f99,
+        "kotelnikov_ok": fs > 2 * f99,
+        "energy_above_nyquist": above,
+        "f_peak": f_peak,
+        "f_peak_alias": sampling.alias_frequency(f_peak, fs) if f_peak > fs / 2 else None,
+        "example": {"n": n0, "t": n0 / fs, "value": float(y[n0])},
+        "n_samples": int(y.size),
+        "samples": b64(y),
+        "options": fs_options(sr),
+    }
+
+
+def step1_audio(x: np.ndarray, sr: int, fs: int, antialias: bool) -> np.ndarray:
+    """То, что услышит слушатель: отсчёты при fs, восстановленные обратно до sr."""
+    fs = int(min(fs, sr))
+    y = resample_for_step1(x, sr, fs, antialias)
+    z = sampling.reconstruct(y, fs, sr)
+    return z[: x.size]
+
+
+# ---------------------------------------------------------------------------
+# Шаги 2–3. Участок и ряд Фурье
+# ---------------------------------------------------------------------------
+
+def _segment(x: np.ndarray, sr: int, t0: float, T_ms: float, src: str):
+    """Возвращает (f на сетке из M+1 точек [0, T], T, M, i0, шаг сетки, точные коэфф.)."""
+    if src == "rec":
+        M = max(8, int(round(T_ms / 1000 * sr)))
+        M = min(M, x.size - 1)
+        i0 = int(round(t0 * sr))
+        i0 = max(0, min(i0, x.size - M - 1))
+        seg = np.asarray(x[i0:i0 + M + 1], dtype=float)
+        return seg, M / sr, M, i0, None
+    if src not in F.ANALYTIC_WAVES:
+        raise ValueError(f"неизвестный источник {src}")
+    T = T_ms / 1000
+    M = ANALYTIC_M
+    t = np.arange(M + 1) * T / M
+    seg = F.ANALYTIC_WAVES[src](t, T)
+    return seg, T, M, None, src
+
+
+def series(x: np.ndarray, sr: int, t0: float, T_ms: float, N: int, src: str) -> dict:
+    seg, T, M, i0, kind = _segment(x, sr, t0, T_ms, src)
+    n_cap = min(N_MAX_UI, F.max_harmonic(M))
+    N = int(max(1, min(N, n_cap)))
+    t = np.arange(M) * T / M
+    f = seg[:M]
+    a, b = F.coeffs_fft(f, n_cap)
+    S = F.partial_sum(a, b, T, t, N)
+    err = f - S
+    rmse = F.rmse_curve(f, a, b, T, t)
+    energy = 2 * float(np.mean(f ** 2))  # (2/T)∫f² dt
+    bessel = F.bessel_sums(a, b)
+    H = min(N, 6)
+    harmonics = [b64(F.harmonic(a, b, n, T, t)) for n in range(1, H + 1)]
+
+    # периодическое продолжение на три периода [−T, 2T)
+    t_ext = np.arange(-M, 2 * M) * T / M
+    f_ext = np.tile(f, 3)
+    S_ext = F.partial_sum(a, b, T, t_ext, N)
+    real_ext = None
+    if src == "rec":
+        lo, hi = i0 - M, i0 + 2 * M
+        if lo >= 0 and hi <= x.size:
+            real_ext = b64(x[lo:hi])
+
+    res = {
+        "src": src, "T": T, "M": M, "omega": 2 * np.pi / T, "N": N, "n_cap": n_cap,
+        "dt": T / M,
+        "t": b64(t), "f": b64(f), "S": b64(S), "err": b64(err),
+        "rmse": b64(rmse), "rmse_N": _f(rmse[N]),
+        "harmonics": harmonics,
+        "amps": b64(np.hypot(a, b)),
+        "coeffs": [{"n": n, "a": float(a[n]), "b": float(b[n])} for n in range(0, min(n_cap, 10) + 1)],
+        "energy": energy, "bessel_N": float(bessel[N]), "bessel_cap": float(bessel[-1]),
+        "ext": {"t": b64(t_ext), "f": b64(f_ext), "S": b64(S_ext), "real": real_ext},
+        "boundary": {"f0": float(f[0]), "fT": float(f[-1]), "jump": float(f[0] - f[-1])},
+    }
+    if src == "rec":
+        res["t0"] = i0 / sr
+        res["sr"] = sr
+        res["boundary"]["typical_step"] = float(np.median(np.abs(np.diff(f))))
+        win = x[i0:i0 + int(0.06 * sr)]
+        P = F.estimate_period_autocorr(win, sr)
+        res["period"] = None
+        if P:
+            ks = np.arange(1, 200)
+            cand = ks * P
+            ok = cand[(cand >= 0.02) & (cand <= 0.05)]
+            best = ok[np.argmin(np.abs(ok - T))] if ok.size else cand[np.argmin(np.abs(cand - T))]
+            res["period"] = {"P": P, "f0": 1 / P, "suggest_T": float(best), "k": int(round(best / P))}
+    else:
+        ae, be = F.analytic_coeffs(kind, n_cap)
+        res["exact"] = [{"n": n, "a": float(ae[n]), "b": float(be[n])} for n in range(0, min(n_cap, 10) + 1)]
+        res["coef_max_err"] = float(max(np.max(np.abs(a - ae)), np.max(np.abs(b - be))))
+        if kind in ("square", "saw"):
+            # скачок величины 2; для меандра у t = 0, для пилы у t = T/2
+            # максимум «рожка» уже шага сетки, поэтому ищем его на мелкой сетке у разрыва
+            t_jump = 0.0 if kind == "square" else T / 2
+            side = 1.0 if kind == "square" else -1.0  # где предел равен +1
+            t_fine = t_jump + side * np.linspace(0, 4 * T / max(N, 1), 8001)[1:]
+            m = float(F.partial_sum(a, b, T, t_fine, N).max())
+            res["gibbs"] = {"jump": 2.0, "max_S": m, "overshoot_fraction": (m - 1.0) / 2.0,
+                            "theory": F.GIBBS_FRACTION}
+    return res
+
+
+def coefficient(x: np.ndarray, sr: int, t0: float, T_ms: float, n: int, kind: str,
+                m: int, src: str) -> dict:
+    """Шаг 3: интеграл a_n или b_n как площадь под f·базис."""
+    if kind not in ("cos", "sin"):
+        raise ValueError("kind должен быть cos или sin")
+    seg, T, M, i0, wave = _segment(x, sr, t0, T_ms, src)
+    n_cap = min(N_MAX_UI, F.max_harmonic(M))
+    n = int(max(0, min(n, n_cap)))
+    m = int(max(0, min(m, n_cap)))
+    t = np.arange(M + 1) * T / M
+    w = 2 * np.pi / T
+    basis_fn = np.cos if kind == "cos" else np.sin
+    basis = basis_fn(n * w * t)
+    prod = seg * basis
+    integral = float(np.trapezoid(prod, t))
+    pos = float(np.trapezoid(np.maximum(prod, 0), t))
+    neg = float(np.trapezoid(np.minimum(prod, 0), t))
+    coef_trap = 2 / T * integral
+    a_fft, b_fft = F.coeffs_fft(seg[:M], n_cap)
+    coef_fft = float(a_fft[n] if kind == "cos" else b_fft[n])
+    a_tr, b_tr = F.coeffs_trapezoid(seg, T, n)
+    c_trap = complex(a_tr[n] - 1j * b_tr[n]) / 2 if n > 0 else complex(a_tr[0] / 2)
+    c_fft = complex(F.complex_coeffs_fft(seg[:M], n_cap)[n])
+
+    # ортогональность: ∫ φ_n φ_m dt для выбранного типа и смешанная пара
+    bm = basis_fn(m * w * t)
+    ortho_same = float(np.trapezoid(basis * bm, t))
+    other = np.sin if kind == "cos" else np.cos
+    ortho_cross = float(np.trapezoid(basis * other(m * w * t), t))
+    if kind == "cos":
+        expected_same = (T if n == m == 0 else T / 2) if n == m else 0.0
+    else:
+        expected_same = (T / 2 if n == m and n != 0 else 0.0)
+
+    res = {
+        "src": src, "kind": kind, "n": n, "m": m, "n_cap": n_cap, "T": T, "M": M, "omega": w,
+        "t": b64(t), "f": b64(seg), "basis": b64(basis), "prod": b64(prod), "basis_m": b64(bm),
+        "integral": integral, "area_pos": pos, "area_neg": neg,
+        "coef_trap": coef_trap, "coef_fft": coef_fft, "diff": coef_trap - coef_fft,
+        "c_trap": {"re": c_trap.real, "im": c_trap.imag, "abs": abs(c_trap)},
+        "c_fft": {"re": c_fft.real, "im": c_fft.imag, "abs": abs(c_fft)},
+        "a_n": float(a_tr[n]), "b_n": float(b_tr[n]),
+        "ortho": {"same": ortho_same, "expected_same": expected_same, "cross": ortho_cross},
+    }
+    if src == "rec":
+        res["t0"] = i0 / sr
+        res["boundary"] = {"f0": float(seg[0]), "fT": float(seg[-1]), "f_last_period": float(seg[M - 1])}
+    else:
+        ae, be = F.analytic_coeffs(wave, n_cap)
+        res["exact"] = float(ae[n] if kind == "cos" else be[n])
+    return res
+
+
+# ---------------------------------------------------------------------------
+# Шаг 4. Спектр
+# ---------------------------------------------------------------------------
+
+def _naive_check(x: np.ndarray, N: int = 1024) -> dict:
+    seg = np.asarray(x[:N], dtype=float)
+    if seg.size < N:
+        seg = np.pad(seg, (0, N - seg.size))
+    t1 = time.perf_counter()
+    Xn = F.dft_naive(seg)
+    t2 = time.perf_counter()
+    Xf = np.fft.fft(seg)
+    t3 = time.perf_counter()
+    return {"N": N, "max_abs_err": float(np.max(np.abs(Xn - Xf))),
+            "max_abs_X": float(np.max(np.abs(Xf))),
+            "t_naive": t2 - t1, "t_fft": t3 - t2}
+
+
+def spectrum_payload(y: np.ndarray, sr: int, window: str) -> dict:
+    s = F.amplitude_spectrum(y, sr, window)
+    peaks = F.find_spectral_peaks(s)
+    top = int(np.argmax(s.amplitude[1:])) + 1
+    return {
+        "N": s.N, "fs": sr, "df": s.df, "window": window, "coherent_gain": s.coherent_gain,
+        "amp": b64(s.amplitude), "peaks": peaks,
+        "top": {"k": top, "f": float(s.freqs[top]), "absX": float(np.abs(s.X[top])),
+                "amp": float(s.amplitude[top]), "sum_w": s.coherent_gain * s.N},
+    }
+
+
+def step4(x: np.ndarray, sr: int, window: str) -> dict:
+    res = spectrum_payload(x, sr, window)
+    p = F.parseval(x)
+    N = x.size
+    res.update({
+        "parseval": p,
+        "naive": _naive_check(x),
+        "ops_naive": float(N) ** 2,
+        "ops_fft": float(N * np.log2(N)),
+        "nyquist": sr / 2,
+    })
+    return res
+
+
+def validate_ops(ops, sr: int) -> list[dict]:
+    if not isinstance(ops, list) or len(ops) > 20:
+        raise ValueError("ops: ожидается список до 20 операций")
+    out = []
+    ny = sr / 2
+    for op in ops:
+        t = op.get("type")
+        if t in ("keep_band", "remove_band"):
+            lo, hi = float(op["f_lo"]), float(op["f_hi"])
+            if not (0 <= lo < hi <= ny + 1e-9):
+                raise ValueError("полоса должна лежать в [0, fs/2] и f_lo < f_hi")
+            out.append({"type": t, "f_lo": lo, "f_hi": hi})
+        elif t in ("lowpass", "highpass"):
+            fc = float(op["f_c"])
+            if not (0 < fc < ny):
+                raise ValueError("частота среза должна лежать в (0, fs/2)")
+            out.append({"type": t, "f_c": fc})
+        else:
+            raise ValueError(f"неизвестная операция {t}")
+    return out
+
+
+def step4_edit(x: np.ndarray, sr: int, ops: list[dict], window: str) -> tuple[dict, np.ndarray]:
+    y, kept = F.apply_spectral_edit(x, sr, ops)
+    res = spectrum_payload(y, sr, window)
+    res["kept_energy"] = kept
+    res["ops"] = ops
+    res["wave"] = b64(y)
+    return res, y

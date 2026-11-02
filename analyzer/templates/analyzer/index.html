@@ -1,0 +1,285 @@
+{% load static %}<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Как ИИ слышит мир</title>
+<link rel="stylesheet" href="{% static 'vendor/katex/katex.min.css' %}">
+<link rel="stylesheet" href="{% static 'analyzer/app.css' %}">
+<script src="{% static 'vendor/katex/katex.min.js' %}"></script>
+<script src="{% static 'vendor/plotly/plotly.min.js' %}"></script>
+</head>
+<body>
+<header class="top">
+  <div>
+    <h1>Как ИИ слышит мир</h1>
+    <p class="sub">Ряды и преобразование Фурье для анализа и классификации звука</p>
+  </div>
+  <button id="btn-present" type="button">Показать презентационный режим</button>
+</header>
+
+<section id="input" class="card">
+  <h2>1. Звук для разбора</h2>
+  <div class="input-row">
+    <div class="box">
+      <h3>Запись с микрофона</h3>
+      <div class="row">
+        <button type="button" class="rec" data-sec="3">● Записать 3 с</button>
+        <button type="button" class="rec" data-sec="5">● Записать 5 с</button>
+        <span id="rec-status" class="muted"></span>
+      </div>
+      <p class="hint">Шумоподавление и автоусиление браузера отключены, чтобы анализировать сырой сигнал.</p>
+    </div>
+    <div class="box">
+      <h3>Файл</h3>
+      <input type="file" id="file" accept=".wav,.mp3,.ogg,.oga,.webm,.flac,.m4a,audio/*">
+      <p class="hint">WAV, MP3, OGG, WEBM. Берутся первые 10 с, стерео сводится в моно.</p>
+    </div>
+  </div>
+  <h3>Галерея примеров</h3>
+  <div class="gallery">
+    {% for s in samples %}
+    <button type="button" class="sample" data-id="{{ s.id }}" title="{{ s.description }}">
+      <b>{{ s.title }}</b>
+      <span>{{ s.description }}</span>
+      {% if s.synthetic %}<em class="badge">синтез</em>{% endif %}
+    </button>
+    {% empty %}
+    <p class="muted">Примеров нет. Запустите <code>python scripts/make_samples.py</code>.</p>
+    {% endfor %}
+  </div>
+  <div id="input-error" class="error" hidden></div>
+</section>
+
+<div id="player" class="player" hidden>
+  <div class="player-head">
+    <b id="rec-name"></b>
+    <span id="rec-info" class="muted"></span>
+    <span id="seg-info" class="seg"></span>
+  </div>
+  <div class="player-body">
+    <audio id="audio" controls preload="auto"></audio>
+    <div id="mini-wave" class="mini"></div>
+  </div>
+  <div id="quality" class="quality"></div>
+</div>
+
+<nav id="stepper" class="stepper" hidden>
+  <button type="button" data-step="1" class="active">1. Звук как функция</button>
+  <button type="button" data-step="2">2. Сборка из гармоник</button>
+  <button type="button" data-step="3">3. Откуда коэффициент</button>
+  <button type="button" data-step="4">4. Спектр (ДПФ)</button>
+  <button type="button" data-step="5" disabled title="Этап 3 плана">5. Спектрограмма</button>
+  <button type="button" data-step="6" disabled title="Этап 4 плана">6. Классификация</button>
+  <button type="button" data-step="7" disabled title="Этап 5 плана">7. Норма / аномалия</button>
+</nav>
+
+{% verbatim %}
+<main id="steps" hidden>
+
+<!-- ===================== ШАГ 1 ===================== -->
+<section class="step card" data-step="1">
+  <h2>Шаг 1. Звук как функция</h2>
+  <div class="plot" id="p1-wave"></div>
+  <div class="plot short" id="p1-zoom"></div>
+  <div class="controls">
+    <label>Частота дискретизации f<sub>s</sub>:</label>
+    <div id="fs-options" class="seg-buttons"></div>
+    <label class="check"><input type="checkbox" id="aa" checked> антиалиасинговый фильтр</label>
+    <button type="button" id="play-orig">▶ Оригинал</button>
+    <button type="button" id="play-fs">▶ При выбранной f<sub>s</sub></button>
+    <span class="hint">Клик по волне выбирает участок для шагов 2–3.</span>
+  </div>
+  <p class="summary" id="s1-summary"></p>
+  <div class="math"><h3>Где здесь математика</h3><div id="m1"></div></div>
+  <details class="strict"><summary>Строго</summary>
+    <p><b>Дискретизация.</b> Запись хранит не функцию <span class="tex">f(t)</span>, а её значения в равноотстоящих точках:
+      <span class="tex">x[n] = f(n\Delta t),\ \Delta t = 1/f_s</span>.</p>
+    <p><b>Теорема Котельникова (Найквиста — Шеннона).</b> Если спектр <span class="tex">f</span> ограничен:
+      <span class="tex">\hat f(\nu) = 0</span> при <span class="tex">|\nu| \ge f_{\max}</span>, и <span class="tex">f_s &gt; 2 f_{\max}</span>, то
+      <span class="tex">f</span> однозначно восстанавливается по отсчётам:</p>
+    <div class="tex-d">f(t) = \sum_{n=-\infty}^{\infty} x[n]\,\operatorname{sinc}\!\left(\frac{t - n\Delta t}{\Delta t}\right),\quad \operatorname{sinc} u = \frac{\sin \pi u}{\pi u}.</div>
+    <p>Частота <span class="tex">f_s/2</span> называется частотой Найквиста.</p>
+    <p><b>Алиасинг.</b> Синусоиды с частотами <span class="tex">f</span> и <span class="tex">f + m f_s</span> дают одинаковые отсчёты:
+      <span class="tex">e^{2\pi i (f + m f_s) n\Delta t} = e^{2\pi i f n \Delta t}\,e^{2\pi i m n} = e^{2\pi i f n \Delta t}</span>.
+      Поэтому частота выше <span class="tex">f_s/2</span> после дискретизации неотличима от <span class="tex">|f - f_s\cdot\operatorname{round}(f/f_s)|</span>.</p>
+    <p><b>Почему нужен фильтр.</b> Реальный звук не имеет строго ограниченного спектра, поэтому перед понижением частоты всё выше
+      <span class="tex">f_s/2</span> подавляют фильтром нижних частот. Здесь это полифазный КИХ-фильтр с окном Кайзера
+      (<code>scipy.signal.resample_poly</code>). Без фильтра частоты выше <span class="tex">f_s/2</span> «заворачиваются» и слышны как посторонние тоны.</p>
+    <p><b>Что вы слышите.</b> Браузер не играет звук при 2 кГц, поэтому отсчёты восстанавливаются обратно до исходной частоты фильтром
+      нижних частот с частотой среза <span class="tex">f_s/2</span>, то есть приближением формулы с sinc. Искажения от алиасинга при этом сохраняются: восстановление не может отличить «завёрнутую» частоту от настоящей.</p>
+    <p><b>Оговорка.</b> Если исходная частота записи не делится на <span class="tex">f_s</span> нацело (48 → 44,1 кГц), то для варианта без фильтра
+      значение <span class="tex">f(n\Delta t)</span> берётся линейной интерполяцией между соседними отсчётами записи: исходной непрерывной функции у нас нет.</p>
+  </details>
+</section>
+
+<!-- ===================== ШАГ 2 ===================== -->
+<section class="step card" data-step="2" hidden>
+  <h2>Шаг 2. Сборка из гармоник (ряд Фурье)</h2>
+  <div class="controls">
+    <label>Сигнал:</label>
+    <div class="seg-buttons" id="src-options">
+      <button type="button" data-src="rec" class="active">наша запись</button>
+      <button type="button" data-src="square">меандр</button>
+      <button type="button" data-src="saw">пила</button>
+      <button type="button" data-src="abs">|x|</button>
+    </div>
+    <label>Длина участка T: <b id="T-val"></b> мс <input type="range" id="T" min="5" max="100" step="0.5" value="30"></label>
+    <button type="button" id="fit-period" disabled>Подогнать T под целое число периодов</button>
+  </div>
+  <div class="controls">
+    <label>Число гармоник N: <b id="N-val"></b> <input type="range" id="N" min="1" max="200" step="1" value="10"></label>
+    <label class="check"><input type="checkbox" id="show-harm"> отдельные гармоники (до 6)</label>
+  </div>
+  <div class="plot" id="p2-sum"></div>
+  <div class="grid2">
+    <div class="plot short" id="p2-err"></div>
+    <div class="plot short" id="p2-rmse"></div>
+  </div>
+  <div class="plot short" id="p2-ext"></div>
+  <p class="summary" id="s2-summary"></p>
+  <div class="math"><h3>Где здесь математика</h3><div id="m2"></div></div>
+  <details class="strict"><summary>Строго</summary>
+    <p><b>Ряд Фурье.</b> Для функции, интегрируемой на периоде <span class="tex">T</span>, <span class="tex">\omega = 2\pi/T</span>:</p>
+    <div class="tex-d">f(t) \sim \frac{a_0}{2} + \sum_{n=1}^{\infty}\left(a_n \cos n\omega t + b_n \sin n\omega t\right),\quad
+      S_N(t) = \frac{a_0}{2} + \sum_{n=1}^{N}\left(a_n \cos n\omega t + b_n \sin n\omega t\right).</div>
+    <p><b>Условия Дирихле.</b> Если на периоде <span class="tex">f</span> кусочно-непрерывна, имеет конечное число разрывов первого рода
+      и конечное число экстремумов (кусочно-монотонна), то ряд сходится в каждой точке, и его сумма равна</p>
+    <div class="tex-d">\frac{f(t-0) + f(t+0)}{2}.</div>
+    <p>В точках непрерывности это просто <span class="tex">f(t)</span>; в точке скачка — середина скачка.</p>
+    <p><b>Эффект Гиббса.</b> Около точки разрыва со скачком <span class="tex">h</span> частичные суммы перескакивают предельное значение на</p>
+    <div class="tex-d">\left(\frac{1}{\pi}\int_0^{\pi}\frac{\sin u}{u}\,du - \frac12\right) h \approx 0{,}0895\,h,</div>
+    <p>то есть примерно на 8,95% скачка. С ростом <span class="tex">N</span> выброс не уменьшается, а сжимается к точке разрыва
+      (максимум находится на расстоянии порядка <span class="tex">T/(2N)</span>). Сходимость поточечная, но не равномерная.</p>
+    <p><b>Неравенство Бесселя и равенство Парсеваля.</b> Для <span class="tex">f \in L^2</span> на периоде:</p>
+    <div class="tex-d">\frac{a_0^2}{2} + \sum_{n=1}^{N}(a_n^2 + b_n^2) \;\le\; \frac{2}{T}\int_0^T f^2(t)\,dt,
+      \qquad \frac{a_0^2}{2} + \sum_{n=1}^{\infty}(a_n^2 + b_n^2) = \frac{2}{T}\int_0^T f^2(t)\,dt.</div>
+    <p><b>Наилучшее приближение.</b> Среди всех тригонометрических многочленов степени <span class="tex">\le N</span> частичная сумма
+      <span class="tex">S_N</span> минимизирует <span class="tex">\|f - P\|_{L^2}</span>: это ортогональная проекция на подпространство,
+      натянутое на <span class="tex">1, \cos n\omega t, \sin n\omega t,\ n \le N</span>. Поэтому <span class="tex">\|f - S_N\|</span> не возрастает с ростом <span class="tex">N</span>
+      (график RMSE), а по Парсевалю <span class="tex">\|f - S_N\|^2 = \frac{T}{2}\sum_{n&gt;N}(a_n^2+b_n^2)</span>.</p>
+    <p><b>Запись не периодична.</b> Мы берём участок <span class="tex">[t_0, t_0+T)</span> и продолжаем его периодически искусственно.
+      Если <span class="tex">f(t_0) \ne f(t_0 + T - 0)</span>, у продолжения появляется разрыв на границе периода, и в этих точках возникает эффект Гиббса,
+      которого в самом звуке нет. Если <span class="tex">T</span> содержит целое число периодов основного тона, скачок маленький.</p>
+    <p><b>Как считаются коэффициенты здесь.</b> По <span class="tex">M</span> отсчётам периода через БПФ:
+      <span class="tex">c_n \approx \frac1M\sum_{j=0}^{M-1} f(t_j)e^{-2\pi i nj/M}</span>, <span class="tex">a_n = 2\operatorname{Re}c_n,\ b_n = -2\operatorname{Im}c_n</span>
+      (подробно на шаге 3). По <span class="tex">M</span> отсчётам различимы только гармоники <span class="tex">n \le (M-1)/2</span>, поэтому для коротких участков
+      максимум <span class="tex">N</span> меньше 200.</p>
+  </details>
+</section>
+
+<!-- ===================== ШАГ 3 ===================== -->
+<section class="step card" data-step="3" hidden>
+  <h2>Шаг 3. Откуда берётся коэффициент</h2>
+  <div class="controls">
+    <label>Номер гармоники n: <b id="n-val"></b> <input type="range" id="n" min="0" max="200" step="1" value="1"></label>
+    <div class="seg-buttons" id="kind-options">
+      <button type="button" data-kind="cos" class="active">cos → aₙ</button>
+      <button type="button" data-kind="sin">sin → bₙ</button>
+    </div>
+    <span class="hint" id="s3-src">Участок и сигнал те же, что на шаге 2.</span>
+  </div>
+  <div class="plot" id="p3-basis"></div>
+  <div class="plot" id="p3-prod"></div>
+  <div class="controls">
+    <label>Ортогональность: вторая гармоника m: <b id="m-val"></b> <input type="range" id="m" min="0" max="200" step="1" value="2"></label>
+  </div>
+  <div class="plot short" id="p3-ortho"></div>
+  <p class="summary" id="s3-summary"></p>
+  <div class="math"><h3>Где здесь математика</h3><div id="m3"></div></div>
+  <details class="strict"><summary>Строго</summary>
+    <p><b>1. Ортогональность.</b> Для целых <span class="tex">n, m \ge 0</span> по формулам произведения:</p>
+    <div class="tex-d">\cos n\omega t\cos m\omega t = \tfrac12[\cos(n-m)\omega t + \cos(n+m)\omega t],\quad
+      \sin n\omega t\sin m\omega t = \tfrac12[\cos(n-m)\omega t - \cos(n+m)\omega t],</div>
+    <div class="tex-d">\sin n\omega t\cos m\omega t = \tfrac12[\sin(n+m)\omega t + \sin(n-m)\omega t].</div>
+    <p>Для целого <span class="tex">k \ne 0</span>: <span class="tex">\int_0^T \cos k\omega t\,dt = \frac{\sin k\omega T}{k\omega} = \frac{\sin 2\pi k}{k\omega} = 0</span>,
+      <span class="tex">\int_0^T \sin k\omega t\,dt = \frac{1 - \cos 2\pi k}{k\omega} = 0</span>, а при <span class="tex">k=0</span> <span class="tex">\int_0^T 1\,dt = T</span>. Отсюда</p>
+    <div class="tex-d">\int_0^T \cos n\omega t\cos m\omega t\,dt = \begin{cases}0,& n\ne m\\ T/2,& n=m\ne0\\ T,& n=m=0\end{cases},\quad
+      \int_0^T \sin n\omega t\sin m\omega t\,dt = \begin{cases}0,& n\ne m\\ T/2,& n=m\ne0\end{cases},\quad
+      \int_0^T \sin n\omega t\cos m\omega t\,dt = 0.</div>
+    <p><b>2. Вывод формул для коэффициентов.</b> Пусть <span class="tex">f(t) = \frac{a_0}{2} + \sum_{k\ge1}(a_k\cos k\omega t + b_k \sin k\omega t)</span>.
+      Умножим на <span class="tex">\cos n\omega t</span> и проинтегрируем по периоду почленно. По п. 1 все слагаемые, кроме <span class="tex">k = n</span>, обнуляются:</p>
+    <div class="tex-d">\int_0^T f(t)\cos n\omega t\,dt = a_n\frac{T}{2}\ \Rightarrow\ a_n = \frac{2}{T}\int_0^T f(t)\cos n\omega t\,dt,\qquad
+      b_n = \frac{2}{T}\int_0^T f(t)\sin n\omega t\,dt.</div>
+    <p>Для <span class="tex">n=0</span>: <span class="tex">\int_0^T f\,dt = \frac{a_0}{2}T</span>, поэтому формула для <span class="tex">a_n</span> верна и при <span class="tex">n=0</span>; ради этого свободный член записывают как <span class="tex">a_0/2</span>.</p>
+    <p><b>Когда почленное интегрирование законно.</b> Достаточно равномерной сходимости ряда на <span class="tex">[0, T]</span>: тогда интеграл предела равен пределу интегралов, а умножение на ограниченную функцию <span class="tex">\cos n\omega t</span> равномерность сохраняет.
+      Более общо достаточно сходимости в <span class="tex">L^2</span>: скалярное произведение <span class="tex">\langle f, g\rangle = \int_0^T fg\,dt</span> непрерывно по неравенству Коши — Буняковского.
+      Если же мы просто <i>определяем</i> коэффициенты этими интегралами (так поступают для любой интегрируемой <span class="tex">f</span>), вопрос о законности отпадает, а сходимость ряда к <span class="tex">f</span> — отдельная теорема (шаг 2).</p>
+    <p><b>3. Комплексная форма.</b> Из <span class="tex">\cos u = \frac{e^{iu}+e^{-iu}}{2},\ \sin u = \frac{e^{iu}-e^{-iu}}{2i}</span>:</p>
+    <div class="tex-d">f(t) \sim \sum_{n=-\infty}^{\infty} c_n e^{in\omega t},\quad c_n = \frac1T\int_0^T f(t)e^{-in\omega t}\,dt,\quad
+      c_n = \frac{a_n - i b_n}{2},\ c_{-n} = \overline{c_n}\ (f\ \text{вещественна}),\quad a_n = 2\operatorname{Re}c_n,\ b_n = -2\operatorname{Im}c_n.</div>
+    <p><b>4. Численное интегрирование.</b> На сетке <span class="tex">t_j = jT/M</span>: метод трапеций
+      <span class="tex">\int_0^T g\,dt \approx \frac{T}{M}\left(\frac{g_0}{2} + g_1 + \dots + g_{M-1} + \frac{g_M}{2}\right)</span>.
+      Для периодической <span class="tex">g</span> (<span class="tex">g_M = g_0</span>) это совпадает с формулой прямоугольников
+      <span class="tex">\frac{T}{M}\sum_{j=0}^{M-1} g_j</span>, а она для <span class="tex">g = f e^{-in\omega t}</span> и есть БПФ, делённое на <span class="tex">M</span>.
+      Для записи <span class="tex">f(t_0+T) \ne f(t_0)</span>, поэтому две оценки немного расходятся — это расхождение показано в числах.</p>
+  </details>
+</section>
+
+<!-- ===================== ШАГ 4 ===================== -->
+<section class="step card" data-step="4" hidden>
+  <h2>Шаг 4. Спектр (ДПФ)</h2>
+  <div class="controls">
+    <label>Окно:</label>
+    <div class="seg-buttons" id="win-options">
+      <button type="button" data-win="hann" class="active">Ханна</button>
+      <button type="button" data-win="rect">прямоугольное</button>
+    </div>
+    <label>Шкала:</label>
+    <div class="seg-buttons" id="scale-options">
+      <button type="button" data-scale="db" class="active">дБ</button>
+      <button type="button" data-scale="lin">линейная</button>
+    </div>
+    <label>До <select id="fmax"><option value="2000">2 кГц</option><option value="5000" selected>5 кГц</option><option value="10000">10 кГц</option><option value="0">fₛ/2</option></select></label>
+  </div>
+  <div class="plot" id="p4-spec"></div>
+  <div class="controls">
+    <label>Полуширина полосы у пика: ±<b id="bw-val"></b> Гц <input type="range" id="bw" min="1" max="200" step="1" value="15"></label>
+    <span class="hint">Клик по графику — послушать компоненту около этой частоты.</span>
+  </div>
+  <div id="peaks" class="peaks"></div>
+  <div class="controls">
+    <label>НЧ-фильтр: <input type="number" id="lp" min="10" step="10" value="1000"> Гц <button type="button" id="apply-lp">применить</button></label>
+    <label>ВЧ-фильтр: <input type="number" id="hp" min="10" step="10" value="1000"> Гц <button type="button" id="apply-hp">применить</button></label>
+    <label>Вырезать полосу <input type="number" id="cut-lo" min="0" step="10" value="900"> – <input type="number" id="cut-hi" min="0" step="10" value="1100"> Гц <button type="button" id="apply-cut">вырезать</button></label>
+  </div>
+  <div class="controls">
+    <span id="ops-list" class="muted">Изменений нет.</span>
+    <button type="button" id="reset-ops">Сбросить</button>
+    <audio id="edit-audio" controls></audio>
+  </div>
+  <p class="summary" id="s4-summary"></p>
+  <div class="math"><h3>Где здесь математика</h3><div id="m4"></div></div>
+  <details class="strict"><summary>Строго</summary>
+    <p><b>От коэффициентов ряда к ДПФ.</b> Пусть вся запись длительности <span class="tex">T = N\Delta t</span> — один период. Заменим интеграл для
+      <span class="tex">c_k</span> формулой прямоугольников на сетке <span class="tex">t_n = n\Delta t</span>:</p>
+    <div class="tex-d">c_k = \frac1T\int_0^T f(t)e^{-2\pi i k t/T}dt \approx \frac1{N\Delta t}\sum_{n=0}^{N-1} x[n] e^{-2\pi i k n/N}\Delta t = \frac{X[k]}{N},\qquad
+      X[k] = \sum_{n=0}^{N-1}x[n]e^{-2\pi i kn/N}.</div>
+    <p>Гармоника <span class="tex">k</span> имеет частоту <span class="tex">f_k = k/T = k f_s/N</span>, шаг сетки частот <span class="tex">\Delta f = f_s/N = 1/T</span>: чем длиннее запись, тем мельче сетка.</p>
+    <p><b>Обратное ДПФ.</b> Из дискретной ортогональности <span class="tex">\sum_{n=0}^{N-1}e^{2\pi i (k-l) n/N} = N\delta_{kl}</span>:
+      <span class="tex">x[n] = \frac1N\sum_{k=0}^{N-1}X[k]e^{2\pi i kn/N}</span> — точно, без приближения.</p>
+    <p><b>Дискретное равенство Парсеваля.</b> <span class="tex">\sum_n |x[n]|^2 = \frac1N\sum_k |X[k]|^2</span>.</p>
+    <p><b>Симметрия.</b> Для вещественного <span class="tex">x</span>: <span class="tex">X[N-k] = \overline{X[k]}</span>, поэтому достаточно <span class="tex">k = 0..N/2</span>, а частоты выше <span class="tex">f_s/2</span> — зеркальные копии.
+      При удалении компоненты обнуляются сразу <span class="tex">X[k]</span> и <span class="tex">X[N-k]</span>, и сигнал остаётся вещественным.</p>
+    <p><b>Алиасинг в ДПФ.</b> Дискретные коэффициенты равны сумме непрерывных: <span class="tex">X[k]/N = \sum_{m}c_{k+mN}</span>. Если у сигнала есть гармоники выше <span class="tex">f_s/2</span>, они складываются с младшими.</p>
+    <p><b>Утечка спектра и окно.</b> ДПФ неявно считает отрезок периодическим. Если в нём не целое число периодов синусоиды, на стыке скачок,
+      и энергия «растекается» по соседним бинам. Окно Ханна <span class="tex">w[n] = \frac12\left(1 - \cos\frac{2\pi n}{N}\right)</span>
+      плавно сводит края к нулю: боковые лепестки ниже (−31 дБ против −13 дБ у прямоугольного), но главный лепесток вдвое шире.
+      Амплитуда синусоиды оценивается как <span class="tex">A \approx 2|X[k]|/\sum_n w[n]</span>.</p>
+    <p><b>Сложность.</b> Прямое вычисление — <span class="tex">N</span> сумм по <span class="tex">N</span> слагаемых, <span class="tex">O(N^2)</span>.
+      БПФ (Кули — Тьюки) делит сумму на чётные и нечётные <span class="tex">n</span>: <span class="tex">X[k] = E[k] + e^{-2\pi i k/N}O[k]</span>, что даёт <span class="tex">O(N\log N)</span>.</p>
+    <p><b>Фильтр обнулением бинов.</b> Это «идеальный» фильтр с прямоугольной АЧХ. Его импульсная характеристика — sinc, поэтому у резких границ полосы возможен звон.</p>
+  </details>
+</section>
+
+<section class="step card" data-step="5" hidden><h2>Шаг 5. Спектрограмма</h2><p class="muted">Будет на этапе 3.</p></section>
+<section class="step card" data-step="6" hidden><h2>Шаг 6. Классификация</h2><p class="muted">Будет на этапе 4.</p></section>
+<section class="step card" data-step="7" hidden><h2>Шаг 7. Норма или аномалия</h2><p class="muted">Будет на этапе 5.</p></section>
+</main>
+{% endverbatim %}
+
+<footer class="foot muted">Учебный проект. Все вычисления выполняются локально.</footer>
+{% csrf_token %}
+<script src="{% static 'analyzer/app.js' %}"></script>
+</body>
+</html>
