@@ -105,13 +105,14 @@ const S = {
   t0: 0, T: 30, N: 10, src: "rec", n3: 1, kind: "cos", m: 2,
   fs: 8000, aa: true, win: "hann", scale: "db", fmax: 5000, bw: 15, ops: [],
   step: 1, spec: null, edited: null, period: null,
+  mode5: "custom", fscale: "lin", win5: 1024, overlap: 0.75, wtype: "hann", mels: 64, fmax5: 8000, t5: null,
 };
 
 // ---------------------------------------------------------------- вход
 async function loadRecording(j) {
   Object.assign(S, {
     rid: j.rid, sr: j.sr, n: j.n, duration: j.duration, wave: f32(j.wave),
-    quality: j.quality, meta: j.meta, t0: j.suggested_t0, ops: [], spec: null, edited: null, period: null,
+    quality: j.quality, meta: j.meta, t0: j.suggested_t0, ops: [], spec: null, edited: null, period: null, t5: null,
   });
   S.fs = S.sr >= 8000 ? 8000 : 2000;
   $("#input-error").hidden = true;
@@ -234,6 +235,7 @@ async function refresh() {
     else if (S.step === 2) await step2(my);
     else if (S.step === 3) await step3(my);
     else if (S.step === 4) await step4(my);
+    else if (S.step === 5) await step5(my);
   } catch (e) { showError(e); }
 }
 const refreshSoon = debounce(refresh, 160);
@@ -532,6 +534,94 @@ function renderSpectrum() {
     `Окно ${S.win === "hann" ? "Ханна уменьшает «растекание» пиков" : "прямоугольное даёт узкие, но «растекающиеся» пики"}.`;
 }
 
+// ---------------------------------------------------------------- шаг 5
+let s5 = null;
+async function step5(my) {
+  if (S.t5 === null) S.t5 = S.t0;
+  const r = await api(`/api/rec/${S.rid}/spectrogram`, {
+    mode: S.mode5, win: S.win5, overlap: S.overlap, window: S.wtype, mels: S.mels, fmax: S.fmax5, t: S.t5,
+  });
+  if (my !== seq) return;
+  s5 = r;
+  r.timesArr = f32(r.times); r.freqArr = f32(r.freqs); r.melC = f32(r.mel_centers);
+  r.specArr = f32(r.spec_db); r.melArr = f32(r.mel_db);
+  $("#custom-controls").hidden = r.mode === "ast";
+  $("#win-ms").textContent = `(${txt(1000 * S.win5 / S.sr, 3)} мс)`;
+  $("#mels-val").textContent = S.mels;
+  renderSpectrogram();
+}
+
+function renderSpectrogram() {
+  const r = s5;
+  if (!r) return;
+  const mel = S.fscale === "mel", M = r.M, K = mel ? r.n_mels : r.K, src = mel ? r.melArr : r.specArr;
+  const stride = mel ? r.n_mels : r.K;
+  let zmax = -Infinity;
+  for (let i = 0; i < src.length; i++) if (src[i] > zmax) zmax = src[i];
+  // z[k][m]: строки — частоты, столбцы — кадры; дБ относительно максимума
+  const z = range(K, (k) => {
+    const row = new Float32Array(M);
+    for (let m = 0; m < M; m++) row[m] = src[m * stride + k] - zmax;
+    return row;
+  });
+  const y = mel ? range(K, (j) => j) : Array.from(r.freqArr);
+  const shapes = [{ type: "line", x0: r.timesArr[r.example.m], x1: r.timesArr[r.example.m], yref: "paper", y0: 0, y1: 1, line: { color: "#fff", width: 2, dash: "dot" } }];
+  let xrange;
+  if (r.ast && mel) {
+    // сетка патчей AST: 16×16, шаг 10 (по мел-полосам и кадрам); кадры идут через 10 мс
+    const dt = r.hop / r.sr;
+    const t0 = r.timesArr[0];
+    for (let i = 0; i < r.ast.n_patches_t; i += 1) {
+      const x = t0 + i * r.ast.stride * dt;
+      shapes.push({ type: "line", x0: x, x1: x, y0: -0.5, y1: K - 0.5, line: { color: "rgba(255,255,255,.25)", width: 1 } });
+    }
+    for (let i = 0; i < r.ast.n_patches_f; i++) {
+      const yy = i * r.ast.stride - 0.5;
+      shapes.push({ type: "line", x0: t0, x1: t0 + r.ast.max_frames * dt, y0: yy, y1: yy, line: { color: "rgba(255,255,255,.25)", width: 1 } });
+    }
+    const end = t0 + r.ast.max_frames * dt;
+    if (r.ast.padded > 0) shapes.push({ type: "rect", x0: r.timesArr[M - 1], x1: end, y0: -0.5, y1: K - 0.5, fillcolor: "rgba(120,120,120,.35)", line: { width: 0 } });
+    xrange = [0, end];
+  }
+  plot("p5-spec", [{
+    type: "heatmap", x: Array.from(r.timesArr), y, z, colorscale: "Viridis", zmin: -90, zmax: 0,
+    colorbar: { title: { text: "дБ" } }, hovertemplate: mel ? "t=%{x:.3f} с<br>полоса %{y}<br>%{z:.1f} дБ<extra></extra>" : "t=%{x:.3f} с<br>f=%{y:.0f} Гц<br>%{z:.1f} дБ<extra></extra>",
+  }], {
+    title: { text: mel ? `Мел-спектрограмма, ${r.n_mels} полос${r.ast ? " · сетка патчей AST 16×16, шаг 10" : ""}` : "Спектрограмма" },
+    xaxis: { title: { text: "t, с" }, range: xrange }, yaxis: { title: { text: mel ? "номер мел-полосы" : "f, Гц" } }, shapes,
+  });
+  const p = $("#p5-spec");
+  p.removeAllListeners?.("plotly_click");
+  p.on("plotly_click", (ev) => { S.t5 = ev.points[0].x; refresh(); });
+
+  // срез в момент t_m
+  const m = r.example.m;
+  const col = range(K, (k) => src[m * stride + k] - zmax);
+  plot("p5-slice", [{ x: mel ? Array.from(r.melC) : Array.from(r.freqArr), y: col, mode: mel ? "lines+markers" : "lines", line: { color: C.accent, width: 1 }, marker: { size: 4 } }], {
+    title: { text: `Срез при t = ${txt(r.example.t, 4)} с (кадр m = ${m})` }, showlegend: false,
+    xaxis: { title: { text: mel ? "центр мел-полосы, Гц" : "f, Гц" } }, yaxis: { title: { text: "дБ от максимума" }, range: [-100, 5] },
+  });
+
+  const e = r.example, g = r.gabor;
+  const lines = [
+    `X(m,k) = \\sum_{n=0}^{N-1} x[n + mH]\\,w[n]\\,e^{-2\\pi i k n/N},\\quad N = ${r.n_win}\\ (${num(r.win_ms, 4)}\\ \\text{мс}),\\ H = ${r.hop}\\ (${num(r.hop_ms, 4)}\\ \\text{мс}),\\ f_s = ${num(r.sr, 5)}\\ \\text{Гц}`,
+    `\\Delta f = \\frac{f_s}{N_{\\text{ДПФ}}} = \\frac{${num(r.sr, 5)}}{${r.n_fft}} = ${num(r.df, 4)}\\ \\text{Гц},\\qquad \\text{кадров } M = ${r.M},\\ \\text{перекрытие } ${num(100 * r.overlap, 3)}\\%`,
+    `m = ${e.m}:\\ \\text{кадр с отсчёта } mH = ${e.start},\\ \\text{пик } k = ${e.k},\\ f_k = ${num(e.f, 5)}\\ \\text{Гц}`,
+    `S(m,k) = |X(m,k)|^2 = ${num(e.S, 4)},\\quad 10\\log_{10}(S + \\varepsilon) = ${num(e.S_db, 4)}\\ \\text{дБ}\\quad(\\varepsilon = ${num(r.eps, 1)})`,
+    `m(f_k) = 2595\\log_{10}\\!\\left(1 + \\frac{${num(e.f, 5)}}{700}\\right) = ${num(e.mel_of_f, 5)}\\ \\text{мел} \\Rightarrow \\text{полоса } j = ${e.band}\\ (\\text{центр } ${num(e.band_center, 4)}\\ \\text{Гц, вес } ${num(e.band_weight, 3)})`,
+    `\\sigma_t = ${num(1000 * g.sigma_t, 4)}\\ \\text{мс},\\ \\sigma_f = ${num(g.sigma_f, 4)}\\ \\text{Гц}:\\quad \\sigma_t\\sigma_f = ${num(g.product, 4)} \\;\\ge\\; \\frac{1}{4\\pi} = ${num(g.bound, 4)}`,
+  ];
+  if (r.window === "rect") lines.push({ html: "У прямоугольного окна в непрерывном случае σ<sub>f</sub> = ∞ (|W(f)|² убывает как 1/f²). Здесь число конечно только потому, что частоты ограничены ±fₛ/2." });
+  if (r.ast) lines.push({ html: `Вход AST: 1024 кадра по 10 мс → патчи 16×16 с шагом 10: ${r.ast.n_patches_f} × ${r.ast.n_patches_t} = ${r.ast.n_patches} патчей. ` +
+    (r.ast.truncated ? "Запись длиннее 10,24 с: лишние кадры отрезаются." : `Здесь ${r.ast.frames_used} кадров записи, остальные ${r.ast.padded} — нули (серая зона).`) });
+  mathBlock("m5", lines);
+
+  const tonal = r.flatness < 0.1;
+  $("#s5-summary").textContent = `Спектрограмма — это ДПФ шага 4, посчитанное в коротких окнах по ${txt(r.win_ms, 3)} мс через каждые ${txt(r.hop_ms, 3)} мс. ` +
+    `По вертикали частота, по горизонтали время, цвет — громкость. В выбранный момент самая сильная частота ${txt(e.f, 4)} Гц, спектральная плоскость ${txt(r.flatness, 2)} (1 — белый шум, около 0 — отдельные тоны)${tonal ? ": спектр с выраженными пиками" : ""}. ` +
+    `Длинное окно точнее по частоте, короткое — по времени: σₜ·σ_f = ${txt(g.product, 3)}, а меньше 1/(4π) ≈ 0,0796 не бывает. Именно такая картинка (мел, лог) идёт на вход нейросети.`;
+}
+
 // ---------------------------------------------------------------- обработчики
 function segButtons(id, attr, key, after) {
   $$(`#${id} button`).forEach((b) => (b.onclick = () => {
@@ -599,6 +689,16 @@ window.addEventListener("DOMContentLoaded", () => {
   $("#apply-hp").onclick = () => addOp({ type: "highpass", f_c: +$("#hp").value });
   $("#apply-cut").onclick = () => addOp({ type: "remove_band", f_lo: +$("#cut-lo").value, f_hi: +$("#cut-hi").value });
   $("#reset-ops").onclick = () => { S.ops = []; applyOps().catch(showError); };
+
+  // шаг 5
+  segButtons("mode-options", "mode", "mode5", () => { if (S.mode5 === "ast") { S.fscale = "mel"; $$("#fscale-options button").forEach((b) => b.classList.toggle("active", b.dataset.fscale === "mel")); } refresh(); });
+  segButtons("fscale-options", "fscale", "fscale", renderSpectrogram);
+  segButtons("wtype-options", "wtype", "wtype", refresh);
+  $("#win").onchange = (e) => { S.win5 = +e.target.value; refresh(); };
+  $("#overlap").onchange = (e) => { S.overlap = +e.target.value; refresh(); };
+  $("#fmax5").onchange = (e) => { S.fmax5 = +e.target.value; refresh(); };
+  $("#mels").oninput = (e) => { S.mels = +e.target.value; $("#mels-val").textContent = S.mels; refreshSoon(); };
+  $("#mels-val").textContent = S.mels;
 
   // презентационный режим
   $("#btn-present").onclick = (e) => {

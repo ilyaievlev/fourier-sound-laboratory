@@ -307,3 +307,73 @@ def step4_edit(x: np.ndarray, sr: int, ops: list[dict], window: str) -> tuple[di
     res["ops"] = ops
     res["wave"] = b64(y)
     return res, y
+
+
+# ---------------------------------------------------------------------------
+# Шаг 5. Спектрограмма
+# ---------------------------------------------------------------------------
+
+from . import stft as ST  # noqa: E402
+
+WIN_LENGTHS = (256, 512, 1024, 2048, 4096)
+OVERLAPS = (0.0, 0.5, 0.75, 0.875)
+MAX_FRAMES = 16000
+MAX_CELLS = 2_500_000
+#: Параметры входа AST (preprocessor_config.json и ASTFeatureExtractor, revision f826b80d).
+AST_PARAMS = {"sr": 16000, "n_win": 400, "hop": 160, "n_fft": 512, "n_mels": 128, "max_frames": 1024,
+              "patch": 16, "stride": 10}
+
+
+def step5(x: np.ndarray, sr: int, n_win: int, overlap: float, window: str, n_mels: int,
+          fmax: float, t_sel: float, mode: str) -> dict:
+    if mode == "ast":
+        p = AST_PARAMS
+        y = sampling.resample(x, sr, p["sr"])
+        sr_u, n_win, hop, n_fft, window, n_mels = p["sr"], p["n_win"], p["hop"], p["n_fft"], "hann", p["n_mels"]
+        overlap = 1 - hop / n_win
+    else:
+        if n_win not in WIN_LENGTHS or overlap not in OVERLAPS or window not in ST.WINDOWS:
+            raise ValueError("параметры окна вне списка")
+        if not 8 <= n_mels <= 256:
+            raise ValueError("число мел-полос от 8 до 256")
+        y, sr_u = x, sr
+        hop = max(1, int(round(n_win * (1 - overlap))))
+        n_fft = n_win
+    fmax = min(fmax if fmax > 0 else sr_u / 2, sr_u / 2)
+    M = ST.n_frames(y.size, n_win, hop)
+    r = ST.stft(y, sr_u, n_win, hop, window, n_fft)
+    K = int(np.searchsorted(r.freqs, fmax, side="right"))
+    if M > MAX_FRAMES or M * max(K, n_mels) > MAX_CELLS:
+        raise ValueError(f"слишком много кадров ({M}) для показа: уменьшите перекрытие или увеличьте окно")
+    S = r.power
+    S_db = ST.to_db(S)
+    fb = ST.mel_filterbank(sr_u, n_fft, n_mels, 0.0, sr_u / 2)
+    mel_S = S @ fb.T
+    mel_db = ST.to_db(mel_S)
+
+    m = int(np.clip(np.argmin(np.abs(r.times - t_sel)), 0, M - 1))
+    k = int(np.argmax(S[m, 1:])) + 1
+    f_k = float(r.freqs[k])
+    centers = ST.mel_centers(sr_u, n_mels)
+    j = int(np.argmax(fb[:, k]))
+    sp = ST.window_spreads(r.w, sr_u)
+    res = {
+        "mode": mode, "sr": sr_u, "n_win": n_win, "hop": hop, "n_fft": n_fft, "overlap": overlap, "window": window,
+        "n_mels": n_mels, "M": M, "K": K, "fmax": fmax,
+        "win_ms": 1000 * n_win / sr_u, "hop_ms": 1000 * hop / sr_u, "df": sr_u / n_fft,
+        "times": b64(r.times), "freqs": b64(r.freqs[:K]), "mel_centers": b64(centers),
+        "spec_db": b64(S_db[:, :K]), "mel_db": b64(mel_db), "db_max": float(S_db.max()),
+        "eps": ST.EPS,
+        "example": {"m": m, "t": float(r.times[m]), "start": int(r.starts[m]), "k": k, "f": f_k,
+                    "S": float(S[m, k]), "S_db": float(S_db[m, k]), "mel_of_f": float(ST.hz_to_mel(f_k)),
+                    "band": j, "band_center": float(centers[j]), "band_weight": float(fb[j, k])},
+        "gabor": sp,
+        "flatness": ST.spectral_flatness(S[m, 1:]),
+    }
+    if mode == "ast":
+        p = AST_PARAMS
+        n_t = (p["max_frames"] - p["patch"]) // p["stride"] + 1
+        n_f = (p["n_mels"] - p["patch"]) // p["stride"] + 1
+        res["ast"] = {**p, "frames_used": min(M, p["max_frames"]), "n_patches_t": n_t, "n_patches_f": n_f,
+                      "n_patches": n_t * n_f, "padded": max(0, p["max_frames"] - M), "truncated": M > p["max_frames"]}
+    return res

@@ -108,3 +108,20 @@ def test_foreign_session_cannot_read(client):
     other.get("/")
     assert other.get(f"/api/rec/{rid}/step1").status_code == 404
     assert client.get("/api/rec/..%2f..%2fetc/step1").status_code == 404
+
+
+@pytest.mark.parametrize("params", [
+    {"mode": "custom", "win": 1024, "overlap": 0.75, "window": "hann", "mels": 64, "fmax": 8000},
+    {"mode": "custom", "win": 256, "overlap": 0.875, "window": "rect", "mels": 128, "fmax": 0},
+    {"mode": "custom", "win": 4096, "overlap": 0.5, "window": "blackman", "mels": 32, "fmax": 4000},
+    {"mode": "ast"},
+])
+def test_spectrogram_api(client, params):
+    rid = load_sample(client, "siren")["rid"]
+    r = client.get(f"/api/rec/{rid}/spectrogram", {**params, "t": 1.0})
+    assert r.status_code == 200, r.content
+    d = r.json()
+    assert d["gabor"]["product"] >= d["gabor"]["bound"] * (1 - 1e-3)
+    if params["mode"] == "ast":
+        assert d["sr"] == 16000 and d["hop"] == 160 and d["ast"]["n_patches"] == 1212
+    assert client.get(f"/api/rec/{rid}/spectrogram", {"win": 1000}).status_code == 400

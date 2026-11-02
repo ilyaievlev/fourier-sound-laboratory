@@ -69,7 +69,7 @@
   <button type="button" data-step="2">2. Сборка из гармоник</button>
   <button type="button" data-step="3">3. Откуда коэффициент</button>
   <button type="button" data-step="4">4. Спектр (ДПФ)</button>
-  <button type="button" data-step="5" disabled title="Этап 3 плана">5. Спектрограмма</button>
+  <button type="button" data-step="5">5. Спектрограмма</button>
   <button type="button" data-step="6" disabled title="Этап 4 плана">6. Классификация</button>
   <button type="button" data-step="7" disabled title="Этап 5 плана">7. Норма / аномалия</button>
 </nav>
@@ -272,7 +272,63 @@
   </details>
 </section>
 
-<section class="step card" data-step="5" hidden><h2>Шаг 5. Спектрограмма</h2><p class="muted">Будет на этапе 3.</p></section>
+<!-- ===================== ШАГ 5 ===================== -->
+<section class="step card" data-step="5" hidden>
+  <h2>Шаг 5. Спектрограмма (STFT)</h2>
+  <div class="controls">
+    <label>Параметры:</label>
+    <div class="seg-buttons" id="mode-options">
+      <button type="button" data-mode="custom" class="active">свои</button>
+      <button type="button" data-mode="ast">как на входе AST</button>
+    </div>
+    <label>Шкала:</label>
+    <div class="seg-buttons" id="fscale-options">
+      <button type="button" data-fscale="lin" class="active">обычная</button>
+      <button type="button" data-fscale="mel">мел</button>
+    </div>
+  </div>
+  <div class="controls" id="custom-controls">
+    <label>Длина окна N: <select id="win"><option>256</option><option>512</option><option selected>1024</option><option>2048</option><option>4096</option></select> <span id="win-ms" class="muted"></span></label>
+    <label>Перекрытие: <select id="overlap"><option value="0">0%</option><option value="0.5">50%</option><option value="0.75" selected>75%</option><option value="0.875">87,5%</option></select></label>
+    <label>Окно:</label>
+    <div class="seg-buttons" id="wtype-options">
+      <button type="button" data-wtype="hann" class="active">Ханна</button>
+      <button type="button" data-wtype="hamming">Хэмминга</button>
+      <button type="button" data-wtype="blackman">Блэкмана</button>
+      <button type="button" data-wtype="rect">прямоуг.</button>
+    </div>
+    <label>Мел-полос: <b id="mels-val"></b> <input type="range" id="mels" min="16" max="256" step="8" value="64"></label>
+    <label>До <select id="fmax5"><option value="4000">4 кГц</option><option value="8000" selected>8 кГц</option><option value="0">fₛ/2</option></select></label>
+  </div>
+  <div class="plot tall" id="p5-spec"></div>
+  <p class="hint">Клик по спектрограмме выбирает момент времени для среза.</p>
+  <div class="plot short" id="p5-slice"></div>
+  <p class="summary" id="s5-summary"></p>
+  <div class="math"><h3>Где здесь математика</h3><div id="m5"></div></div>
+  <details class="strict"><summary>Строго</summary>
+    <p><b>STFT.</b> Сигнал режут на кадры длины <span class="tex">N</span> с шагом <span class="tex">H</span>, каждый умножают на окно <span class="tex">w</span> и берут ДПФ:</p>
+    <div class="tex-d">X(m,k) = \sum_{n=0}^{N-1} x[n + mH]\,w[n]\,e^{-2\pi i k n/N},\qquad S(m,k) = |X(m,k)|^2.</div>
+    <p>В ТЗ та же формула записана с фазой от начала записи: <span class="tex">\sum_n x[n]\,w[n-mH]\,e^{-2\pi i k n/N}</span>. Замена <span class="tex">n \to n + mH</span> даёт множитель
+      <span class="tex">e^{-2\pi i k mH/N}</span>, модуль которого равен 1, поэтому спектрограммы <span class="tex">|X|^2</span> совпадают.</p>
+    <p><b>Децибелы.</b> <span class="tex">S_{\text{дБ}} = 10\log_{10}(S + \varepsilon)</span>: множитель 10, а не 20, потому что <span class="tex">S</span> — мощность (квадрат амплитуды).
+      <span class="tex">\varepsilon</span> не даёт взять логарифм нуля в тишине. На графике показано <span class="tex">S_{\text{дБ}} - \max S_{\text{дБ}}</span>.</p>
+    <p><b>Сетка.</b> Кадры идут через <span class="tex">H/f_s</span> секунд, частоты — через <span class="tex">\Delta f = f_s/N</span>. Длинное окно даёт мелкую сетку частот, но размазывает события во времени;
+      короткое — наоборот. Перекрытие кадров делает картинку плавнее по времени, но не улучшает разрешение: оно задаётся длиной окна.</p>
+    <p><b>Принцип неопределённости Габора.</b> Пусть <span class="tex">\sigma_t^2 = \frac{\int (t-\bar t)^2|w(t)|^2dt}{\int|w|^2dt}</span>, <span class="tex">\sigma_f^2 = \frac{\int f^2|W(f)|^2df}{\int|W|^2df}</span>. Тогда</p>
+    <div class="tex-d">\sigma_t\,\sigma_f \ge \frac{1}{4\pi},</div>
+    <p>и равенство достигается только на гауссовой функции <span class="tex">e^{-t^2/(2\sigma^2)}</span>. Доказательство — неравенство Коши — Буняковского для <span class="tex">t\,w(t)</span> и <span class="tex">w'(t)</span>
+      вместе с равенством Парсеваля <span class="tex">\int|w'|^2dt = 4\pi^2\int f^2|W|^2df</span> и интегрированием по частям <span class="tex">\int t\,(w^2)'\,dt = -\int w^2\,dt</span>.
+      Следствие: нельзя одновременно сделать окно сколь угодно коротким и сколь угодно узким по частоте.</p>
+    <p>У прямоугольного окна <span class="tex">|W(f)|^2 \sim 1/f^2</span>, и <span class="tex">\int f^2|W|^2df</span> расходится: в непрерывном случае <span class="tex">\sigma_f = \infty</span>.
+      В дискретном случае частоты ограничены <span class="tex">\pm f_s/2</span>, поэтому число конечное, но большое и зависит от <span class="tex">f_s</span>.</p>
+    <p><b>Мел-шкала.</b> <span class="tex">m(f) = 2595\log_{10}(1 + f/700)</span>: почти линейна до ~700 Гц и логарифмична выше, как высота тона на слух; <span class="tex">m(1000\ \text{Гц}) \approx 1000</span>.
+      Мел-банк — треугольные фильтры с центрами, равноотстоящими по <span class="tex">m</span>. Мел-спектрограмма —
+      <span class="tex">S_{\text{мел}}(m, j) = \sum_k H_j(k)\,S(m,k)</span>: в герцах полосы расширяются к высоким частотам.</p>
+    <p><b>Вход модели.</b> AST получает лог-мел-спектрограмму: 16 кГц, окно 25 мс, шаг 10 мс, 128 полос, ровно 1024 кадра (короче — дополняется нулями),
+      затем режет её на патчи 16×16 с шагом 10, то есть <span class="tex">12 \times 101 = 1212</span> патчей. В режиме «как на входе AST» здесь повторены эти параметры.
+      Точный вход модели (с предыскажением 0,97, удалением постоянной составляющей и нормировкой из её препроцессора) будет показан на шаге 6.</p>
+  </details>
+</section>
 <section class="step card" data-step="6" hidden><h2>Шаг 6. Классификация</h2><p class="muted">Будет на этапе 4.</p></section>
 <section class="step card" data-step="7" hidden><h2>Шаг 7. Норма или аномалия</h2><p class="muted">Будет на этапе 5.</p></section>
 </main>

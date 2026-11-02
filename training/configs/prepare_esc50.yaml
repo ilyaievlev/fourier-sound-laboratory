@@ -1,0 +1,6 @@
+seed: 2026
+dataset_root: data/ESC-50-master
+output_dir: artifacts/prepare_esc50
+expected_clips: 2000
+expected_classes: 50
+expected_folds: 5

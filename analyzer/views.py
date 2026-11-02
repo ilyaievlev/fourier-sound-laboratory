@@ -232,3 +232,15 @@ def band_audio(request, rid, x, sr, meta):
     ops = steps.validate_ops([{"type": "keep_band", "f_lo": request.GET["f_lo"], "f_hi": request.GET["f_hi"]}], sr)
     y, _ = steps.F.apply_spectral_edit(x, sr, ops)
     return _wav_response(y, sr, "band.wav")
+
+
+@require_GET
+@with_rec
+def api_spectrogram(request, rid, x, sr, meta):
+    g = request.GET
+    mode = g.get("mode", "custom")
+    if mode not in ("custom", "ast"):
+        raise ValueError("mode")
+    return JsonResponse(steps.step5(x, sr, int(g.get("win", 1024)), float(g.get("overlap", 0.75)),
+                                    g.get("window", "hann"), int(g.get("mels", 64)), float(g.get("fmax", 8000)),
+                                    float(g.get("t", 0)), mode))
