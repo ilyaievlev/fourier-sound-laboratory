@@ -1,0 +1,33 @@
+seed: 2026
+model_id: MIT/ast-finetuned-audioset-10-10-0.4593
+revision: f826b80d28226b62986cc218e5cec390b1096902
+local_files_only: true
+dataset_root: data/ESC-50-master
+split_manifest: artifacts/prepare_esc50/splits.json
+folds: [1, 2, 3, 4, 5]
+sample_rate: 16000
+duration_seconds: 5
+num_classes: 50
+max_length: 512
+batch_size: 4
+gradient_accumulation: 4
+head_epochs: 5
+finetune_epochs: 25
+head_learning_rate: 0.001
+finetune_learning_rate: 0.00002
+weight_decay: 0.01
+warmup_fraction: 0.1
+patience: 8
+mixed_precision: true
+gradient_checkpointing: true
+attention_implementation: sdpa
+num_workers: 0
+cpu_threads: 2
+mixup_alpha: 0.2
+time_shift_seconds: 0.5
+noise_snr_db: [10, 30]
+specaugment_frequency_width: 8
+specaugment_time_width: 40
+benchmark_steps: 50
+benchmark_warmup_steps: 5
+benchmark_validation_batches: 10

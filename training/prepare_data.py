@@ -20,7 +20,10 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def build_splits(rows, expected_clips=2000, expected_classes=50, expected_folds=5):
+def build_splits(rows, expected_clips=2000, expected_classes=50, expected_folds=5,
+                 source_overlap_policy='error'):
+    if source_overlap_policy not in {'error', 'purge_training_and_validation'}:
+        raise ValueError('Unknown source overlap policy')
     if len(rows) != expected_clips:
         raise ValueError(f"Expected {expected_clips} clips, got {len(rows)}")
     names, sources, labels, folds = set(), {}, {}, set()
@@ -34,7 +37,7 @@ def build_splits(rows, expected_clips=2000, expected_classes=50, expected_folds=
         source = row['src_file']
         if not source:
             raise ValueError('Missing source ID')
-        if source in sources and sources[source] != fold:
+        if source in sources and sources[source] != fold and source_overlap_policy == 'error':
             raise ValueError(f"Source {source} occurs in multiple folds")
         sources[source] = fold
         if target in labels and labels[target] != row['category']:
@@ -51,7 +54,7 @@ def build_splits(rows, expected_clips=2000, expected_classes=50, expected_folds=
         if {r['target'] for r in normalized if r['fold'] == fold} != set(labels):
             raise ValueError(f"Missing classes in fold {fold}")
     normalized.sort(key=lambda r: r['filename'])
-    return {
+    splits = {
         str(k): {
             part: [r for r in normalized if r['fold'] in selected]
             for part, selected in {
@@ -60,6 +63,16 @@ def build_splits(rows, expected_clips=2000, expected_classes=50, expected_folds=
             }.items()
         } for k in sorted(folds)
     }
+    for split in splits.values():
+        test_sources = {r['src_file'] for r in split['test']}
+        original_val, original_train = split['validation'], split['train']
+        split['validation'] = [r for r in original_val if r['src_file'] not in test_sources]
+        held_out = test_sources | {r['src_file'] for r in split['validation']}
+        split['train'] = [r for r in original_train if r['src_file'] not in held_out]
+        split['excluded'] = [dict(r, excluded_from=part) for part, original in
+                             [('train', original_train), ('validation', original_val)]
+                             for r in original if r not in split[part]]
+    return splits
 
 
 def environment():
@@ -97,7 +110,7 @@ def main():
     with metadata.open(encoding='utf-8', newline='') as handle:
         rows = list(csv.DictReader(handle))
     splits = build_splits(rows, config['expected_clips'], config['expected_classes'],
-                          config['expected_folds'])
+                          config['expected_folds'], config.get('source_overlap_policy', 'error'))
     files = sorted(r['filename'] for r in rows)
     missing = [name for name in files if not (dataset / 'audio' / name).is_file()]
     if missing:
@@ -124,6 +137,12 @@ def main():
         'audio_content_hashed': False,
     })
     write_json('splits.json', splits)
+    write_json('split_audit.json', {
+        'policy': config.get('source_overlap_policy', 'error'),
+        'note': 'Official test folds retained; overlapping sources purged from train/validation. Modified benchmark protocol.',
+        'folds': {k: {part: len(rows) for part, rows in split.items()} for k, split in splits.items()},
+        'excluded': {k: split['excluded'] for k, split in splits.items()},
+    })
     write_json('metrics.json', {'stage': 'data_preparation', 'clips': len(files),
                                'model_metrics': None})
     print(f'Validated {len(files)} clips; split manifests saved to {output}')

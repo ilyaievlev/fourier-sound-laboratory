@@ -19,5 +19,9 @@ urlpatterns = [
     path("api/rec/<str:rid>/spectrogram", views.api_spectrogram),
     path("api/rec/<str:rid>/classify", views.api_classify),
     path("api/models/status", views.api_models_status),
+    path("api/anomaly/status", views.api_anomaly_status),
+    path("api/anomaly/report", views.api_anomaly_report),
+    path("api/rec/<str:rid>/anomaly", views.api_anomaly),
+    path("api/rec/<str:rid>/feedback", views.api_feedback),
     path("api/rec/<str:rid>/variant.wav", views.variant_audio),
 ]

@@ -1,0 +1,25 @@
+seed: 2026
+dataset_root: data/dcase2020
+manifest: data/pump_manifest.json
+output_dir: artifacts/anomaly_pump
+id_list: [id_00, id_02, id_04, id_06]
+sample_rate: 16000
+n_fft: 1024
+win_length: 1024
+hop_length: 512
+n_mels: 128
+power: 2
+epsilon: 0.0000000001
+crop_frames: 64
+crop_hop_frames: 32
+batch_size: 32
+epochs: 40
+patience: 8
+learning_rate: 0.001
+cpu_threads: 2
+num_workers: 0
+lof_neighbors: 20
+threshold_quantile: 0.9
+ast_model_id: MIT/ast-finetuned-audioset-10-10-0.4593
+ast_revision: f826b80d28226b62986cc218e5cec390b1096902
+benchmark_steps: 50

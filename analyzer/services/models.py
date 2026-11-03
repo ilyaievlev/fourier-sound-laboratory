@@ -9,6 +9,9 @@
 from __future__ import annotations
 
 import os
+import gc
+import json
+from pathlib import Path
 import threading
 import time
 
@@ -36,6 +39,7 @@ CLAP_MAX_S = 10.0
 
 _lock = threading.Lock()
 _cache: dict[str, object] = {}
+PROJECT_DIR = Path(__file__).resolve().parents[2] / 'artifacts/ast_project'
 
 
 def pick_device() -> str:
@@ -85,12 +89,25 @@ def _load(key: str):
         torch.set_num_threads(int(os.environ.get("FSL_TORCH_THREADS", "4")))
         device = pick_device()
         t = time.perf_counter()
-        if key == "ast":
+        if key == "project":
+            if not project_status()['available']:
+                raise FileNotFoundError('Дообученная модель ещё не готова')
+            # Keep the local project model separate from the larger pair AST+CLAP in RAM.
+            _cache.pop('ast', None)
+            _cache.pop('clap', None)
+            gc.collect()
+            from transformers import ASTFeatureExtractor, ASTForAudioClassification
+            proc = ASTFeatureExtractor.from_pretrained(PROJECT_DIR, local_files_only=True)
+            model = ASTForAudioClassification.from_pretrained(PROJECT_DIR, local_files_only=True)
+        elif key == "ast":
+            _cache.pop('project', None)
+            gc.collect()
             from transformers import ASTFeatureExtractor, ASTForAudioClassification
 
             proc = _from_pretrained(ASTFeatureExtractor, key)
             model = _from_pretrained(ASTForAudioClassification, key)
         elif key == "clap":
+            _cache.pop('project', None)
             from transformers import ClapModel, ClapProcessor
 
             proc = _from_pretrained(ClapProcessor, key)
@@ -100,6 +117,32 @@ def _load(key: str):
         model.eval().to(device)
         _cache[key] = {"proc": proc, "model": model, "device": device, "load_s": time.perf_counter() - t}
         return _cache[key]
+
+
+def project_status():
+    return dict(available=(PROJECT_DIR / 'complete.json').is_file(), source='public dataset subset',
+                own_recordings=False)
+
+
+def project_infer(wave, sr=16000):
+    import torch
+    if not project_status()['available']:
+        return dict(available=False, message='Модель классов проекта ещё обучается.')
+    from training.common.project_audio import prepare
+    m = _load('project')
+    feats = m['proc'](prepare(wave, sr), sampling_rate=16000, return_tensors='pt')
+    with _lock, torch.inference_mode():
+        logits = m['model'](input_values=feats['input_values'].to(m['device'])).logits[0]
+        probabilities = logits.softmax(-1).float().cpu().numpy()
+    labels_ru = json.loads((PROJECT_DIR / 'labels_ru.json').read_text(encoding='utf-8'))
+    threshold = json.loads((PROJECT_DIR / 'threshold.json').read_text())['max_prob_threshold']
+    ordered = np.argsort(probabilities)[::-1]
+    top = [dict(label=m['model'].config.id2label[int(i)],
+                ru=labels_ru[m['model'].config.id2label[int(i)]], p=float(probabilities[i])) for i in ordered]
+    uncertain = top[0]['p'] < threshold
+    return dict(available=True, labels=top, threshold=threshold, uncertain=uncertain,
+                verdict='другое' if uncertain else top[0]['ru'], device=m['device'],
+                entropy=float(-np.sum(probabilities * np.log(probabilities + 1e-12))))
 
 
 def status() -> dict:

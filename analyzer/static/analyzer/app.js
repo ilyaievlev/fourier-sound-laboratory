@@ -130,6 +130,16 @@ async function loadRecording(j) {
     (j.meta.original_sr !== S.sr ? ` · исходно ${j.meta.original_sr} Гц` : "") +
     (j.meta.trimmed ? " · обрезано до 10 с" : "") + (j.meta.padded ? " · дополнено тишиной до 1 с" : "");
   renderQuality();
+  S.s7 = null; S.pumpInitialized = false; S.anomalyResult = null;
+  const feedbackRid = S.rid;
+  api(`/api/rec/${S.rid}/feedback`).then((feedback) => {
+    if (S.rid !== feedbackRid) return;
+    const list = $("#feedback-list"); list.replaceChildren();
+    for (const message of feedback.observations) {
+      const item = document.createElement("li"); item.textContent = message; list.appendChild(item);
+    }
+    $("#feedback-panel").hidden = false;
+  }).catch(showError);
   renderMini();
   $("#player").scrollIntoView({ behavior: "smooth" });
   goStep(1, true);
@@ -242,6 +252,7 @@ async function refresh() {
     else if (S.step === 4) await step4(my);
     else if (S.step === 5) await step5(my);
     else if (S.step === 6) await step6(my);
+    else if (S.step === 7) await step7(my);
   } catch (e) { showError(e); }
 }
 const refreshSoon = debounce(refresh, 160);
@@ -675,6 +686,20 @@ function renderStep6() {
   const r = S.s6;
   if (!r) return;
   const a = r.orig.ast, c = r.orig.clap, V = r.variant;
+  const project = r.orig.project;
+  if (project?.available) {
+    const variants = V?.project?.available ? V.project : null;
+    const order = project.labels.map((label) => label.label);
+    const traces = [{ type: "bar", orientation: "h", y: project.labels.map((label) => label.ru).reverse(),
+      x: project.labels.map((label) => label.p).reverse(), name: "исходная", marker: { color: C.accent } }];
+    if (variants) traces.push({ type: "bar", orientation: "h", y: project.labels.map((label) => label.ru).reverse(),
+      x: order.map((name) => variants.labels.find((label) => label.label === name).p).reverse(), name: "после изменения", marker: { color: C.orange } });
+    plot("p6-project", traces, { barmode: "group", margin: { l: 100, r: 10, t: 10, b: 40 },
+      xaxis: { range: [0, 1], title: { text: "softmax по классам проекта" } }, showlegend: !!variants });
+    $("#project-verdict").textContent = `Ответ: «${project.verdict}». Максимум ${pct(project.labels[0].p)}, порог по validation ${txt(project.threshold, 3)}.` +
+      (project.uncertain ? " Уверенного ответа нет. Для новой записи поднесите источник ближе и уменьшите фоновый шум." : "") +
+      (variants ? ` После изменения: «${variants.verdict}».` : "");
+  } else $("#project-verdict").textContent = project?.message || "Модель классов проекта ещё готовится.";
   const name = (t) => (t.ru ? `${t.ru} (${t.label})` : t.label);
   const astY = a.top.map(name).reverse();
   const astData = [{ type: "bar", orientation: "h", y: astY, x: a.top.map((t) => t.p).reverse(), name: "исходная", marker: { color: C.accent },
@@ -733,6 +758,70 @@ function renderStep6() {
     sm += ` После изменения вероятность «${t0.label}» ${d < 0 ? "упала" : "выросла"} на ${txt(Math.abs(d), 2)}.`;
   }
   $("#s6-summary").textContent = sm;
+}
+
+// ---------------------------------------------------------------- шаг 7
+async function step7(my) {
+  const status = await api('/api/anomaly/status');
+  if (my !== seq) return;
+  $("#s7-status").textContent = status.available ? status.note : "Артефакты детектора ещё готовятся. Здесь появятся оценки на настоящих записях насосов.";
+  $("#s7-ready").hidden = !status.available;
+  if (!status.available) return;
+  if (!S.pumpInitialized) {
+    $("#pump-id").value = S.meta?.machine_id || 'id_00';
+    $("#pump-approach").value = status.deployment.approach;
+    S.pumpInitialized = true;
+  }
+  if (!S.s7) {
+    const report = await api('/api/anomaly/report', { machine_id: $("#pump-id").value, approach: $("#pump-approach").value });
+    if (my !== seq) return;
+    S.s7 = report;
+  }
+  renderStep7();
+}
+
+function renderStep7() {
+  const report = S.s7;
+  if (!report) return;
+  const [lo, hi] = report.score_range, width = Math.max(hi - lo, .01);
+  const slider = $("#pump-threshold");
+  slider.min = Math.min(lo - .05 * width, report.validation_threshold);
+  slider.max = Math.max(hi + .05 * width, report.validation_threshold);
+  slider.step = (slider.max - slider.min) / 1000;
+  slider.value = report.threshold;
+  $("#pump-threshold-value").textContent = txt(report.threshold, 4);
+  const [[tn, fp], [fn, tp]] = report.confusion;
+  plot("p7-roc", [
+    { x: report.roc.fpr, y: report.roc.tpr, mode: "lines", name: "ROC", line: { color: C.accent } },
+    { x: [0, 1], y: [0, 1], mode: "lines", name: "случайное ранжирование", line: { dash: "dash", color: C.gray } },
+    { x: [fp / (fp + tn)], y: [tp / (tp + fn)], mode: "markers", name: "текущий порог", marker: { color: C.accent, size: 12 } },
+  ], { title: { text: `AUC ${txt(report.auc, 4)}, pAUC ${txt(report.pauc, 4)}` },
+    xaxis: { title: { text: "FPR — ложные тревоги" }, range: [0, 1] }, yaxis: { title: { text: "TPR — найденные аномалии" }, range: [0, 1] } });
+  plot("p7-confusion", [{ type: "heatmap", z: report.confusion, x: ["норма", "аномалия"], y: ["норма", "аномалия"],
+    text: report.confusion.map((row) => row.map(String)), texttemplate: "%{text}",
+    colorscale: [[0, "#eff6ff"], [1, C.accent]], zmin: 0, zmax: report.test_clips, showscale: false }],
+    { title: { text: `Тест: ${report.test_clips} клипов, порог ${txt(report.threshold, 4)}` },
+      margin: { l: 85, r: 20, t: 45, b: 60 },
+      xaxis: { title: { text: "Решение модели" } }, yaxis: { title: { text: "Истинная метка" }, autorange: "reversed" } });
+  const lines = [
+    `\\mathrm{TPR}=\\frac{TP}{TP+FN}=\\frac{${tp}}{${tp}+${fn}}=${num(tp / (tp + fn))}`,
+    `\\mathrm{FPR}=\\frac{FP}{FP+TN}=\\frac{${fp}}{${fp}+${tn}}=${num(fp / (fp + tn))}`,
+    `\\theta_{\\mathrm{val},90\\%}=${num(report.validation_threshold)},\\qquad\\theta_{\\mathrm{slider}}=${num(report.threshold)}`,
+  ];
+  if (S.anomalyResult?.applicable) {
+    const result = S.anomalyResult;
+    $("#pump-verdict").textContent = `Score ${txt(result.score, 4)}: ` + (result.score > report.threshold
+      ? "есть отличие от нормальных образцов этого ID; требуется проверка." : "близко к нормальным образцам этого ID.");
+    lines.push(report.approach === 'id_cnn'
+      ? `s=-\\frac1M\\sum_{m=1}^M\\ln p(y_{ID}\\mid x_m)=${num(result.score)}`
+      : `s=-\\mathrm{LOF.score\\_samples}(e(x))=${num(result.score)}`);
+    if (result.explanation?.embedding_dimensions) {
+      const e = result.explanation;
+      lines.push(`d(e(x),e(x_{\\mathrm{nearest}}))=\\sqrt{\\sum_{j=1}^{${e.embedding_dimensions}}(e_j(x)-e_j(x_{\\mathrm{nearest}}))^2}=${num(e.nearest_normal_distance)}`);
+      lines.push(`k=${e.neighbors},\\qquad\\frac1k\\sum_{i=1}^k d(e(x),e(x_i))=${num(e.mean_neighbor_distance)}`);
+    } else if (result.explanation?.crops) lines.push(`M=${result.explanation.crops},\\qquad L_{\\mathrm{crop}}=${result.explanation.crop_frames}`);
+  }
+  mathBlock('m7', lines);
 }
 
 // ---------------------------------------------------------------- обработчики
@@ -832,6 +921,28 @@ window.addEventListener("DOMContentLoaded", () => {
     S.clapLabels.push({ ru: ru || en, en });
     $("#new-ru").value = $("#new-en").value = "";
     renderLabels();
+  };
+  for (const id of ['pump-id', 'pump-approach']) $("#" + id).onchange = () => {
+    S.s7 = null; S.anomalyResult = null; $("#pump-verdict").textContent = ""; refresh();
+  };
+  $("#pump-threshold").oninput = (event) => { $("#pump-threshold-value").textContent = txt(+event.target.value, 4); };
+  $("#pump-threshold").onchange = async (event) => {
+    try {
+      S.s7 = await api('/api/anomaly/report', { machine_id: $("#pump-id").value,
+        approach: $("#pump-approach").value, threshold: event.target.value });
+      renderStep7();
+    } catch (error) { showError(error); }
+  };
+  $("#run7").onclick = async () => {
+    $("#pump-verdict").textContent = "Считаю оценку текущей записи…";
+    try {
+      const result = await post(`/api/rec/${S.rid}/anomaly`, { machine_id: $("#pump-id").value,
+        approach: $("#pump-approach").value, threshold: +$("#pump-threshold").value,
+        applicable: $("#pump-applicable").checked }, true);
+      S.anomalyResult = result;
+      if (!result.applicable) $("#pump-verdict").textContent = result.message;
+      else renderStep7();
+    } catch (error) { showError(error); }
   };
 
   // презентационный режим

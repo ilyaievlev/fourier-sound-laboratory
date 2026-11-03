@@ -417,13 +417,14 @@ def make_variant(x: np.ndarray, sr: int, v: dict, edited: np.ndarray | None) -> 
 def _classify(y: np.ndarray, sr: int, prompts: list[str]) -> dict:
     from . import models as MD
 
-    key = hashlib.sha1(np.ascontiguousarray(y, dtype=np.float32).tobytes() + repr((sr, prompts)).encode()).hexdigest()
+    key = hashlib.sha1(np.ascontiguousarray(y, dtype=np.float32).tobytes() + repr((sr, prompts, MD.project_status()['available'])).encode()).hexdigest()
     if key in _cls_cache:
         _cls_cache.move_to_end(key)
         return _cls_cache[key]
+    project = MD.project_infer(y, sr)
     a = MD.ast_infer(sampling.resample(y, sr, 16000))
     c = MD.clap_infer(sampling.resample(y, sr, 48000), prompts)
-    res = {"ast": a, "clap": c}
+    res = {"ast": a, "clap": c, "project": project}
     _cls_cache[key] = res
     if len(_cls_cache) > 24:
         _cls_cache.popitem(last=False)
@@ -479,6 +480,7 @@ def step6(x: np.ndarray, sr: int, labels: list[dict], threshold: float, variant:
         "orig": {"ast": _ast_summary(base["ast"]), "clap": _clap_summary(base["clap"], labels, threshold)},
         "prompts": prompts, "template": CLAP_TEMPLATE,
     }
+    res['orig']['project'] = base['project']
     a = base["ast"]
     n16 = int(round(x.size / sr * 16000))
     res["input"] = {"values": b64(a["input"]), "frames": a["input"].shape[0], "mels": a["input"].shape[1],
@@ -489,6 +491,7 @@ def step6(x: np.ndarray, sr: int, labels: list[dict], threshold: float, variant:
         y, info = make_variant(x, sr, variant, edited)
         v = _classify(y, sr, prompts)
         res["variant"] = {"info": info, "ast": _ast_summary(v["ast"]), "clap": _clap_summary(v["clap"], labels, threshold)}
+        res['variant']['project'] = v['project']
         # те же 5 классов AudioSet, что в исходной записи: как изменились их вероятности
         lab_idx = {l: i for i, l in enumerate(v["ast"]["labels"])}
         pv = PR.sigmoid(v["ast"]["logits"])

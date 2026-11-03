@@ -71,7 +71,7 @@
   <button type="button" data-step="4">4. Спектр (ДПФ)</button>
   <button type="button" data-step="5">5. Спектрограмма</button>
   <button type="button" data-step="6">6. Классификация</button>
-  <button type="button" data-step="7" disabled title="Этап 5 плана">7. Норма / аномалия</button>
+  <button type="button" data-step="7">7. Норма / аномалия</button>
 </nav>
 
 {% verbatim %}
@@ -336,7 +336,8 @@
   <div class="grid3">
     <div class="box">
       <h3>Наша дообученная AST</h3>
-      <p class="muted">Появится после обучения на классах проекта (этап 8 плана). Пока используются готовые модели справа.</p>
+      <div class="plot short" id="p6-project"></div>
+      <p id="project-verdict" class="summary">Проверяю локальную модель классов проекта…</p>
     </div>
     <div class="box"><h3>AST, AudioSet (527 классов), топ-5</h3><div class="plot short" id="p6-ast"></div></div>
     <div class="box"><h3>CLAP, zero-shot по меткам</h3><div class="plot short" id="p6-clap"></div><p id="clap-verdict" class="summary"></p></div>
@@ -365,7 +366,8 @@
     <button type="button" id="run6">Классифицировать</button>
     <audio id="var-audio" controls hidden></audio>
   </div>
-  <h3>Что на самом деле получает AST</h3>
+  <h3>Вход исходной AST (AudioSet)</h3>
+  <p class="hint">Ниже показан вход исходной AST. Проектная модель использует тот же ASTFeatureExtractor, но короткую волну сначала дополняет тишиной до 10 с, как при обучении. Поэтому входы двух моделей для короткой записи различаются.</p>
   <div class="plot" id="p6-input"></div>
   <p class="summary" id="s6-summary"></p>
   <div class="math"><h3>Где здесь математика</h3><div id="m6"></div></div>
@@ -391,12 +393,35 @@
     <p><b>Шум с заданным SNR.</b> <span class="tex">\text{SNR} = 10\log_{10}\frac{P_{\text{сигнала}}}{P_{\text{шума}}}</span>, <span class="tex">P = \frac1N\sum x[n]^2</span>. Белый гауссов шум масштабируется так, чтобы SNR был ровно заданным.</p>
   </details>
 </section>
-<section class="step card" data-step="7" hidden><h2>Шаг 7. Норма или аномалия</h2><p class="muted">Будет на этапе 5.</p></section>
+<section class="step card" data-step="7" hidden>
+  <h2>Шаг 7. Норма или аномалия</h2>
+  <p id="s7-status" class="summary">Проверяю готовность детектора…</p>
+  <p>Учебный эксперимент для насосов DCASE 2020 и ID 00/02/04/06. Для произвольного звука с микрофона нет эталона нормы этой машины: результат неприменим. Вывод не является диагнозом неисправности.</p>
+  <div id="s7-ready" hidden>
+    <div class="controls">
+      <label>ID насоса <select id="pump-id"><option>id_00</option><option>id_02</option><option>id_04</option><option>id_06</option></select></label>
+      <label>Подход <select id="pump-approach"><option value="id_cnn">Классификатор ID</option><option value="lof">LOF на AST-эмбеддингах</option></select></label>
+      <label>Порог <b id="pump-threshold-value"></b><input id="pump-threshold" type="range" min="0" max="10" step="0.001"></label>
+    </div>
+    <p class="hint">При открытии используется подход с лучшим средним AUC. Исходный порог выбран только по нормальной валидации. Ползунок меняет визуализацию тестовых результатов и решение для клипа, без переобучения.</p>
+    <div class="grid2"><div class="plot" id="p7-roc"></div><div class="plot" id="p7-confusion"></div></div>
+    <label><input id="pump-applicable" type="checkbox"> Мой файл — запись того же насоса и ID из DCASE 2020</label>
+    <button type="button" id="run7">Оценить текущую запись</button>
+    <p id="pump-verdict" class="summary"></p>
+    <div class="math"><h3>Где здесь математика</h3><div id="m7"></div></div>
+    <details class="strict"><summary>Строго</summary>
+      <p>Классификатор обучается только на нормальных записях различать ID машин. Для клипа усредняется отрицательная лог-вероятность истинного ID по скользящим вырезкам по 64 кадра. Большое значение означает несходство с нормальными обучающими образцами.</p>
+      <p>LOF сравнивает локальную плотность AST-эмбеддинга с плотностью соседей. Используется novelty=True, 20 соседей, отдельная модель на каждый ID. Оценка −score_samples: чем больше, тем необычнее образец.</p>
+      <p>ROC показывает TPR при разных FPR. AUC — площадь под ROC, pAUC здесь стандартизована как в scikit-learn на участке FPR ≤ 0,1. Порог — 90-й перцентиль score нормальных validation для данного ID. Тестовые аномалии не участвовали в обучении и выборе порога.</p>
+    </details>
+  </div>
+</section>
+<section id="feedback-panel" class="card" hidden><h2>Что можно сказать о записи</h2><ul id="feedback-list"></ul></section>
 </main>
 {% endverbatim %}
 
 <footer class="foot muted">Учебный проект. Все вычисления выполняются локально.</footer>
 {% csrf_token %}
-<script src="{% static 'analyzer/app.js' %}"></script>
+<script src="{% static 'analyzer/app.js' %}?v=20261104"></script>
 </body>
 </html>

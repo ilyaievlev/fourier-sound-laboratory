@@ -4,3 +4,4 @@ output_dir: artifacts/prepare_esc50
 expected_clips: 2000
 expected_classes: 50
 expected_folds: 5
+source_overlap_policy: purge_training_and_validation

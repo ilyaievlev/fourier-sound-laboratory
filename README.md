@@ -12,16 +12,24 @@
 | 2. `fourier.py` с тестами, шаги 2–4 | готово |
 | 3. Шаг 5 (спектрограмма) | готово |
 | 4. Шаг 6 (AST, CLAP) | готово |
-| 5–10 | — |
+| 5. Шаг 7 (ID-CNN/AST+LOF) | модели обучены, оценены и подключены |
+| 6. Обратная связь, презентационный режим | реализованы |
+| 7. Сравнение моделей | три модели обучены и оценены по пяти фолдам; AST accuracy 93.10% |
+| 8. Проектная AST и детектор | обучены, оценены и подключены |
+| 9. Публикация | отдельное решение после проверки лицензий |
+| 10. Итоговые проверки | 93 теста приложения без пропусков, офлайн CPU и UI проверены; физический микрофон не проверялся |
+
+Общие инструкции — [AGENTS.md](AGENTS.md), журнал моделей — [CODEX.md](CODEX.md).
+Собственные записи для обучения не требуются: используются публичные датасеты.
 
 ## Установка и запуск (Windows / macOS / Linux)
 
 Нужен [uv](https://docs.astral.sh/uv/). Python 3.12 и зависимости он поставит сам.
 
 ```bash
-uv sync                    # базовые зависимости (шаги 1–5)
-uv sync --extra ml         # + PyTorch/transformers/scikit-learn (шаги 6–7)
-uv run python manage.py runserver
+uv sync --inexact                    # базовые зависимости (шаги 1–5)
+uv sync --extra ml --inexact          # + PyTorch/transformers/scikit-learn (шаги 6–7)
+uv run --no-sync python manage.py runserver
 ```
 
 Откройте **http://localhost:8000** (или 127.0.0.1). Микрофон в браузере работает
@@ -31,7 +39,7 @@ uv run python manage.py runserver
 
 ```bash
 uv sync --extra ml --inexact
-uv run python scripts/download_models.py   # один раз: AST 330 МБ + CLAP 589 МБ в кэш Hugging Face
+uv run --no-sync python scripts/download_models.py   # один раз: AST 330 МБ + CLAP 589 МБ в кэш Hugging Face
 ```
 
 Ревизии закреплены в `analyzer/services/models.py`. После загрузки можно работать без сети:
@@ -41,7 +49,7 @@ uv run python scripts/download_models.py   # один раз: AST 330 МБ + CLA
 
 ffmpeg ставить не нужно: используется бинарник из пакета `imageio-ffmpeg`.
 Plotly.js и KaTeX лежат в `analyzer/static/vendor/`, поэтому интернет для работы страницы не нужен.
-Обновить их: `uv run python scripts/fetch_static.py` (версии закреплены, sha512 проверяется).
+Обновить их: `uv run --no-sync python scripts/fetch_static.py` (версии закреплены, sha512 проверяется).
 
 PyTorch по умолчанию ставится с CUDA 13.2 (колёса `cu132`, поддерживают RTX 2060 Super / sm_75).
 На macOS ставится обычная сборка с MPS.
@@ -49,7 +57,7 @@ PyTorch по умолчанию ставится с CUDA 13.2 (колёса `cu1
 ## Тесты
 
 ```bash
-uv run pytest
+uv run --no-sync pytest
 ```
 
 - `tests/test_fourier.py` — аналитические тесты математики (SPEC §7 и сверх него):
@@ -85,11 +93,40 @@ samples/             галерея
 
 ## Галерея
 
-Сейчас все примеры **синтетические** (`scripts/make_samples.py`, seed 2026) и помечены в интерфейсе
+Исходные примеры **синтетические** (`scripts/make_samples.py`, seed 2026) и помечены в интерфейсе
 как «синтез». Это простые физические модели: гласные через форманты, тон свиста, шумовые импульсы,
-ЧМ-сирена, аккорд, модель насоса и та же модель с ударами подшипника. Перед защитой их лучше заменить
-настоящими записями: положить WAV в `samples/` и добавить запись в `samples/manifest.json` с `"synthetic": false`.
-Примеры насоса на этапе 5 будут взяты из DCASE.
+ЧМ-сирена, аккорд, модель насоса и та же модель с ударами подшипника.
+Галерея дополнена семью реальными примерами FSD50K/DCASE с
+источниками и лицензиями; аудио — data/gallery, атрибуции — data/gallery/attributions.json.
+Детектор применим к pump и известным ID. Порог выбран на normal validation;
+ползунок исследует test, не меняя сохранённый порог и модель.
+
+## Общий цикл обучения и проверки
+
+Окружение обучения изолировано в training/.venv. Цикл A → C → B завершён:
+сравнение ESC-50, насос и проектная AST обучены и оценены, реальные примеры,
+отчёт, model cards, сценарий защиты и презентация готовы. Итоговые проверки
+приложения выполнены на CPU с HF_HUB_OFFLINE=1; все 12 слайдов просмотрены.
+Собственные записи не используются. Статус — artifacts/all_tasks/status.json,
+логи — artifacts/all_tasks/stdout.log и stderr.log.
+
+```powershell
+training\.venv\Scripts\python.exe training/status_all.py
+training\.venv\Scripts\python.exe training/pipeline_all.py --resume
+```
+
+Команда --resume нужна только после прерванного цикла; завершённый запуск
+повторять не требуется. Второй активный экземпляр блокируется. Подробные метрики
+и ограничения — CODEX.md и reports/experiment_report.md. Проектная AST: raw
+accuracy 87.60%, после validation-порога 85.85%; LOF pump mean AUC 0.8638.
+FSD50K имеет проектное разбиение по авторам, свист только 6/2/1; перенос на
+пользовательский микрофон не оценивался. Для локального запуска на CPU офлайн:
+
+```powershell
+$env:FSL_DEVICE='cpu'
+$env:HF_HUB_OFFLINE='1'
+.venv\Scripts\python.exe manage.py runserver
+```
 
 ## Безопасность и данные
 
@@ -100,4 +137,7 @@ samples/             галерея
 ## Лицензии сторонних компонентов
 
 Plotly.js — MIT, KaTeX — MIT (файлы LICENSE рядом в `vendor/`).
-Модели и данные для шагов 6–7 будут перечислены здесь с лицензиями до любой публикации.
+Исходная AST — BSD-3-Clause, CLAP — Apache-2.0. ESC-50 — CC BY-NC 3.0,
+DCASE 2020 pump — CC BY-NC-SA 4.0. Проектная AST обучена на клипах FSD50K
+с CC0/CC BY; авторы и лицензии — artifacts/ast_project/attributions.csv.
+Model cards и LICENSE_NOTES.md лежат рядом с моделями. Публикация не выполнялась.

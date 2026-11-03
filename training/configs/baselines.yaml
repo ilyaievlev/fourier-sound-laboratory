@@ -1,0 +1,26 @@
+seed: 2026
+models: [wave_cnn, mel_cnn]
+folds: [1, 2, 3, 4, 5]
+dataset_root: data/ESC-50-master
+split_manifest: artifacts/prepare_esc50/splits.json
+sample_rate: 16000
+duration_seconds: 5
+num_classes: 50
+batch_size: 16
+epochs: 30
+patience: 8
+learning_rate: 0.001
+weight_decay: 0.01
+warmup_fraction: 0.1
+mixup_alpha: 0.2
+time_shift_seconds: 0.5
+noise_snr_db: [10, 30]
+mel_bins: 64
+n_fft: 1024
+hop_length: 160
+specaugment_frequency_width: 8
+specaugment_time_width: 40
+benchmark_steps: 50
+benchmark_warmup_steps: 5
+cpu_threads: 4
+mixed_precision: true

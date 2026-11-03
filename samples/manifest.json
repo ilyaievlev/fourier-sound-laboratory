@@ -1,51 +1,130 @@
 [
- {
-  "id": "voice",
-  "title": "Голос",
-  "file": "voice.wav",
-  "description": "Синтез гласных «а», «о», «и»: импульсы голосовой щели (модель Розенберга, f₀ ≈ 115–145 Гц) через резонаторы формант.",
-  "synthetic": true
- },
- {
-  "id": "whistle",
-  "title": "Свист",
-  "file": "whistle.wav",
-  "description": "Почти чистый тон 1,6–2,1 кГц с вибрато 5,5 Гц и шумом дыхания.",
-  "synthetic": true
- },
- {
-  "id": "clap",
-  "title": "Хлопки",
-  "file": "clap.wav",
-  "description": "Пять коротких шумовых импульсов в полосе 0,9–5 кГц с затуханием ≈ 6 мс.",
-  "synthetic": true
- },
- {
-  "id": "siren",
-  "title": "Сирена",
-  "file": "siren.wav",
-  "description": "Частотная модуляция 650–1450 Гц с периодом 2 с, с 2-й и 3-й гармониками.",
-  "synthetic": true
- },
- {
-  "id": "music",
-  "title": "Музыка",
-  "file": "music.wav",
-  "description": "Арпеджио ля минор: затухающие ноты с 8 гармониками каждая.",
-  "synthetic": true
- },
- {
-  "id": "pump_normal",
-  "title": "Насос: норма",
-  "file": "pump_normal.wav",
-  "description": "Модель насоса: вращение 24,5 Гц и гармоники, лопаточная частота 147 Гц, гул 100 Гц, шум потока.",
-  "synthetic": true
- },
- {
-  "id": "pump_anomaly",
-  "title": "Насос: аномалия",
-  "file": "pump_anomaly.wav",
-  "description": "Та же модель + удары ≈ 103 раза в секунду, возбуждающие резонанс 3,1 кГц, и усиленная 2-я гармоника вращения.",
-  "synthetic": true
- }
+  {
+    "id": "real_voice",
+    "title": "\u0413\u043e\u043b\u043e\u0441 \u2014 \u0434\u0430\u0442\u0430\u0441\u0435\u0442",
+    "file": "../data/gallery/voice.wav",
+    "description": "FSD50K-project; train; \u0430\u0432\u0442\u043e\u0440: TwistedLemon; http://creativecommons.org/licenses/by/3.0/. \u0418\u0441\u0442\u043e\u0447\u043d\u0438\u043a: https://freesound.org/s/17643/",
+    "synthetic": false,
+    "dataset": "FSD50K-project",
+    "source_url": "https://freesound.org/s/17643/",
+    "license": "http://creativecommons.org/licenses/by/3.0/",
+    "author": "TwistedLemon"
+  },
+  {
+    "id": "real_whistle",
+    "title": "\u0421\u0432\u0438\u0441\u0442 \u2014 \u0434\u0430\u0442\u0430\u0441\u0435\u0442",
+    "file": "../data/gallery/whistle.wav",
+    "description": "FSD50K-project; train; \u0430\u0432\u0442\u043e\u0440: thesandro; http://creativecommons.org/publicdomain/zero/1.0/. \u0418\u0441\u0442\u043e\u0447\u043d\u0438\u043a: https://freesound.org/s/17737/",
+    "synthetic": false,
+    "dataset": "FSD50K-project",
+    "source_url": "https://freesound.org/s/17737/",
+    "license": "http://creativecommons.org/publicdomain/zero/1.0/",
+    "author": "thesandro"
+  },
+  {
+    "id": "real_clap",
+    "title": "\u0425\u043b\u043e\u043f\u043a\u0438 \u2014 \u0434\u0430\u0442\u0430\u0441\u0435\u0442",
+    "file": "../data/gallery/clap.wav",
+    "description": "FSD50K-project; train; \u0430\u0432\u0442\u043e\u0440: RHumphries; http://creativecommons.org/licenses/by/3.0/. \u0418\u0441\u0442\u043e\u0447\u043d\u0438\u043a: https://freesound.org/s/1921/",
+    "synthetic": false,
+    "dataset": "FSD50K-project",
+    "source_url": "https://freesound.org/s/1921/",
+    "license": "http://creativecommons.org/licenses/by/3.0/",
+    "author": "RHumphries"
+  },
+  {
+    "id": "real_siren",
+    "title": "\u0421\u0438\u0440\u0435\u043d\u0430 \u2014 \u0434\u0430\u0442\u0430\u0441\u0435\u0442",
+    "file": "../data/gallery/siren.wav",
+    "description": "FSD50K-project; train; \u0430\u0432\u0442\u043e\u0440: Corsica_S; http://creativecommons.org/licenses/by/3.0/. \u0418\u0441\u0442\u043e\u0447\u043d\u0438\u043a: https://freesound.org/s/28426/",
+    "synthetic": false,
+    "dataset": "FSD50K-project",
+    "source_url": "https://freesound.org/s/28426/",
+    "license": "http://creativecommons.org/licenses/by/3.0/",
+    "author": "Corsica_S"
+  },
+  {
+    "id": "real_music",
+    "title": "\u041c\u0443\u0437\u044b\u043a\u0430 \u2014 \u0434\u0430\u0442\u0430\u0441\u0435\u0442",
+    "file": "../data/gallery/music.wav",
+    "description": "FSD50K-project; train; \u0430\u0432\u0442\u043e\u0440: TicTacShutUp; http://creativecommons.org/licenses/by/3.0/. \u0418\u0441\u0442\u043e\u0447\u043d\u0438\u043a: https://freesound.org/s/423/",
+    "synthetic": false,
+    "dataset": "FSD50K-project",
+    "source_url": "https://freesound.org/s/423/",
+    "license": "http://creativecommons.org/licenses/by/3.0/",
+    "author": "TicTacShutUp"
+  },
+  {
+    "id": "real_pump_normal",
+    "title": "\u041d\u0430\u0441\u043e\u0441: \u043d\u043e\u0440\u043c\u0430 \u2014 \u0434\u0430\u0442\u0430\u0441\u0435\u0442",
+    "file": "../data/gallery/pump_normal.wav",
+    "description": "DCASE2020-pump; train; \u0430\u0432\u0442\u043e\u0440: NTT Corporation and Hitachi, Ltd.; CC-BY-NC-SA-4.0. \u0418\u0441\u0442\u043e\u0447\u043d\u0438\u043a: https://zenodo.org/records/3678171",
+    "synthetic": false,
+    "dataset": "DCASE2020-pump",
+    "source_url": "https://zenodo.org/records/3678171",
+    "license": "CC-BY-NC-SA-4.0",
+    "author": "NTT Corporation and Hitachi, Ltd.",
+    "machine_id": "id_00"
+  },
+  {
+    "id": "real_pump_anomaly",
+    "title": "\u041d\u0430\u0441\u043e\u0441: \u0430\u043d\u043e\u043c\u0430\u043b\u0438\u044f \u2014 \u0434\u0430\u0442\u0430\u0441\u0435\u0442",
+    "file": "../data/gallery/pump_anomaly.wav",
+    "description": "DCASE2020-pump; test; \u0430\u0432\u0442\u043e\u0440: NTT Corporation and Hitachi, Ltd.; CC-BY-NC-SA-4.0. \u0418\u0441\u0442\u043e\u0447\u043d\u0438\u043a: https://zenodo.org/records/3678171",
+    "synthetic": false,
+    "dataset": "DCASE2020-pump",
+    "source_url": "https://zenodo.org/records/3678171",
+    "license": "CC-BY-NC-SA-4.0",
+    "author": "NTT Corporation and Hitachi, Ltd.",
+    "machine_id": "id_00"
+  },
+  {
+    "id": "voice",
+    "title": "\u0413\u043e\u043b\u043e\u0441",
+    "file": "voice.wav",
+    "description": "\u0421\u0438\u043d\u0442\u0435\u0437 \u0433\u043b\u0430\u0441\u043d\u044b\u0445 \u00ab\u0430\u00bb, \u00ab\u043e\u00bb, \u00ab\u0438\u00bb: \u0438\u043c\u043f\u0443\u043b\u044c\u0441\u044b \u0433\u043e\u043b\u043e\u0441\u043e\u0432\u043e\u0439 \u0449\u0435\u043b\u0438 (\u043c\u043e\u0434\u0435\u043b\u044c \u0420\u043e\u0437\u0435\u043d\u0431\u0435\u0440\u0433\u0430, f\u2080 \u2248 115\u2013145 \u0413\u0446) \u0447\u0435\u0440\u0435\u0437 \u0440\u0435\u0437\u043e\u043d\u0430\u0442\u043e\u0440\u044b \u0444\u043e\u0440\u043c\u0430\u043d\u0442.",
+    "synthetic": true
+  },
+  {
+    "id": "whistle",
+    "title": "\u0421\u0432\u0438\u0441\u0442",
+    "file": "whistle.wav",
+    "description": "\u041f\u043e\u0447\u0442\u0438 \u0447\u0438\u0441\u0442\u044b\u0439 \u0442\u043e\u043d 1,6\u20132,1 \u043a\u0413\u0446 \u0441 \u0432\u0438\u0431\u0440\u0430\u0442\u043e 5,5 \u0413\u0446 \u0438 \u0448\u0443\u043c\u043e\u043c \u0434\u044b\u0445\u0430\u043d\u0438\u044f.",
+    "synthetic": true
+  },
+  {
+    "id": "clap",
+    "title": "\u0425\u043b\u043e\u043f\u043a\u0438",
+    "file": "clap.wav",
+    "description": "\u041f\u044f\u0442\u044c \u043a\u043e\u0440\u043e\u0442\u043a\u0438\u0445 \u0448\u0443\u043c\u043e\u0432\u044b\u0445 \u0438\u043c\u043f\u0443\u043b\u044c\u0441\u043e\u0432 \u0432 \u043f\u043e\u043b\u043e\u0441\u0435 0,9\u20135 \u043a\u0413\u0446 \u0441 \u0437\u0430\u0442\u0443\u0445\u0430\u043d\u0438\u0435\u043c \u2248 6 \u043c\u0441.",
+    "synthetic": true
+  },
+  {
+    "id": "siren",
+    "title": "\u0421\u0438\u0440\u0435\u043d\u0430",
+    "file": "siren.wav",
+    "description": "\u0427\u0430\u0441\u0442\u043e\u0442\u043d\u0430\u044f \u043c\u043e\u0434\u0443\u043b\u044f\u0446\u0438\u044f 650\u20131450 \u0413\u0446 \u0441 \u043f\u0435\u0440\u0438\u043e\u0434\u043e\u043c 2 \u0441, \u0441 2-\u0439 \u0438 3-\u0439 \u0433\u0430\u0440\u043c\u043e\u043d\u0438\u043a\u0430\u043c\u0438.",
+    "synthetic": true
+  },
+  {
+    "id": "music",
+    "title": "\u041c\u0443\u0437\u044b\u043a\u0430",
+    "file": "music.wav",
+    "description": "\u0410\u0440\u043f\u0435\u0434\u0436\u0438\u043e \u043b\u044f \u043c\u0438\u043d\u043e\u0440: \u0437\u0430\u0442\u0443\u0445\u0430\u044e\u0449\u0438\u0435 \u043d\u043e\u0442\u044b \u0441 8 \u0433\u0430\u0440\u043c\u043e\u043d\u0438\u043a\u0430\u043c\u0438 \u043a\u0430\u0436\u0434\u0430\u044f.",
+    "synthetic": true
+  },
+  {
+    "id": "pump_normal",
+    "title": "\u041d\u0430\u0441\u043e\u0441: \u043d\u043e\u0440\u043c\u0430",
+    "file": "pump_normal.wav",
+    "description": "\u041c\u043e\u0434\u0435\u043b\u044c \u043d\u0430\u0441\u043e\u0441\u0430: \u0432\u0440\u0430\u0449\u0435\u043d\u0438\u0435 24,5 \u0413\u0446 \u0438 \u0433\u0430\u0440\u043c\u043e\u043d\u0438\u043a\u0438, \u043b\u043e\u043f\u0430\u0442\u043e\u0447\u043d\u0430\u044f \u0447\u0430\u0441\u0442\u043e\u0442\u0430 147 \u0413\u0446, \u0433\u0443\u043b 100 \u0413\u0446, \u0448\u0443\u043c \u043f\u043e\u0442\u043e\u043a\u0430.",
+    "synthetic": true
+  },
+  {
+    "id": "pump_anomaly",
+    "title": "\u041d\u0430\u0441\u043e\u0441: \u0430\u043d\u043e\u043c\u0430\u043b\u0438\u044f",
+    "file": "pump_anomaly.wav",
+    "description": "\u0422\u0430 \u0436\u0435 \u043c\u043e\u0434\u0435\u043b\u044c + \u0443\u0434\u0430\u0440\u044b \u2248 103 \u0440\u0430\u0437\u0430 \u0432 \u0441\u0435\u043a\u0443\u043d\u0434\u0443, \u0432\u043e\u0437\u0431\u0443\u0436\u0434\u0430\u044e\u0449\u0438\u0435 \u0440\u0435\u0437\u043e\u043d\u0430\u043d\u0441 3,1 \u043a\u0413\u0446, \u0438 \u0443\u0441\u0438\u043b\u0435\u043d\u043d\u0430\u044f 2-\u044f \u0433\u0430\u0440\u043c\u043e\u043d\u0438\u043a\u0430 \u0432\u0440\u0430\u0449\u0435\u043d\u0438\u044f.",
+    "synthetic": true
+  }
 ]

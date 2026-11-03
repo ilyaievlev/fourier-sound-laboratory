@@ -123,7 +123,8 @@ def api_sample(request):
         return _err("Нет такого примера.", 404)
     data, sr = audio.decode(Path(settings.SAMPLES_DIR) / item["file"])
     return _ingest(request, data, sr, {"source": "sample", "name": item["title"], "sample_id": item["id"],
-                                       "synthetic": item.get("synthetic", False)})
+                                       "synthetic": item.get("synthetic", False),
+                                       "dataset": item.get("dataset"), "machine_id": item.get("machine_id")})
 
 
 @require_GET
@@ -266,9 +267,9 @@ def api_classify(request, rid, x, sr, meta):
     try:
         res = steps.step6(x, sr, labels, float(body.get("threshold", 0.5)), variant, edited)
     except ImportError:
-        return _err("Не установлены PyTorch/transformers: выполните uv sync --extra ml.", 503)
+        return _err("Не установлены PyTorch/transformers: выполните uv sync --extra ml --inexact.", 503)
     except OSError as e:
-        return _err(f"Модели не загружены: {e}. Выполните uv run python scripts/download_models.py.", 503)
+        return _err(f"Модели не загружены: {e}. Выполните uv run --no-sync python scripts/download_models.py.", 503)
     res["labels"] = labels
     return JsonResponse(res)
 
@@ -285,3 +286,42 @@ def variant_audio(request, rid, x, sr, meta):
             edited, _ = sf.read(str(p), dtype="float64")
     y, _ = steps.make_variant(x, sr, v, edited)
     return _wav_response(y, sr, "variant.wav")
+
+
+@require_GET
+def api_anomaly_status(request):
+    from .services import anomaly
+    return JsonResponse(anomaly.status())
+
+
+@require_GET
+def api_anomaly_report(request):
+    from .services import anomaly
+    try:
+        return JsonResponse(anomaly.evaluate_threshold(request.GET.get('approach', 'lof'),
+            request.GET.get('machine_id', 'id_00'), request.GET.get('threshold')))
+    except OSError:
+        return _err('Результаты детектора ещё готовятся.', 503)
+    except ValueError as error:
+        return _err(str(error))
+
+
+@require_POST
+@with_rec
+def api_anomaly(request, rid, x, sr, meta):
+    from .services import anomaly
+    body = json.loads(request.body or b'{}')
+    dataset_example = meta.get('dataset') == 'DCASE2020-pump' and not meta.get('synthetic')
+    try:
+        return JsonResponse(anomaly.infer(x, sr, body.get('machine_id', meta.get('machine_id') or 'id_00'),
+            applicable=dataset_example or body.get('applicable') is True, threshold=body.get('threshold'),
+            approach=body.get('approach')))
+    except OSError as error:
+        return _err(str(error), 503)
+
+
+@require_GET
+@with_rec
+def api_feedback(request, rid, x, sr, meta):
+    from .services.feedback import describe
+    return JsonResponse(describe(x, sr))

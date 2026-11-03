@@ -35,6 +35,16 @@ class SplitTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'duplicate'):
             self.build()
 
+    def test_purge_preserves_test_and_removes_source_overlap(self):
+        self.rows[2]['src_file'] = self.rows[0]['src_file']
+        splits = build_splits(self.rows, 10, 2, 5, 'purge_training_and_validation')
+        for split in splits.values():
+            sources = [{r['src_file'] for r in split[p]} for p in ['train', 'validation', 'test']]
+            self.assertFalse(sources[0] & sources[1] or sources[0] & sources[2] or sources[1] & sources[2])
+            self.assertEqual(len(split['test']), 2)
+        self.assertEqual(len(splits['1']['validation']), 1)
+        self.assertEqual(len(splits['5']['train']), 5)
+
     def test_path_traversal_rejected(self):
         self.rows[0]['filename'] = '../escape.wav'
         with self.assertRaisesRegex(ValueError, 'Invalid'):
